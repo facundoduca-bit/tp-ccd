@@ -1,7 +1,7 @@
 library(tidyverse)
 #1. leer archivos CSV
-base_da_1 <- read_csv("base_da_1 (1).csv")
-base_da_2 <- read_csv("base_da_2 (1).csv")
+base_da_1 <- read_csv("base_da_1 (1).csv", show_col_types = FALSE)
+base_da_2 <- read_csv("base_da_2 (1).csv", show_col_types = FALSE)
 
 #2. unir ambas bases
 base_unida <- base_da_1 %>%
@@ -11,8 +11,8 @@ base_unida <- base_da_1 %>%
 glimpse(base_unida)
 
 #4 transformar la base para anular los NA estructurales, ordenando según nueva variable de estado productivo
-base_unida <- read_csv("base_da_1 (1).csv") %>%
-  full_join(read_csv("base_da_2 (1).csv"), 
+base_unida <- read_csv("base_da_1 (1).csv", show_col_types = FALSE) %>%
+  full_join(read_csv("base_da_2 (1).csv", show_col_types = FALSE), 
             by = c("cod_provincia", "provincia", "cod_ncm_6d", "ncm_6d", "seccion", "complejidad_producto")) %>%
   mutate(
     estado_productivo = case_when(
@@ -110,3 +110,62 @@ ggplot(
     x = "Seccion",
     y = "Complejidad promedio"
   )
+
+# 8.Calcular potencialidad promedio por provincia
+tabla_potencialidad_prov <- base_unida %>%
+  filter(estado_productivo == "No exporta") %>%
+  group_by(provincia) %>%
+  summarise(potencialidad_promedio = mean(potencialidad, na.rm = TRUE))
+
+#9. calcular medidas descriptivas de potencialidad provincial
+resumen_potencialidad <- tabla_potencialidad_prov %>%
+  summarise(
+    media = mean(potencialidad_promedio, na.rm = TRUE),
+    mediana = median(potencialidad_promedio, na.rm = TRUE),
+    desvio = sd(potencialidad_promedio, na.rm = TRUE),
+    minimo = min(potencialidad_promedio, na.rm = TRUE),
+    maximo = max(potencialidad_promedio, na.rm = TRUE)
+  )
+print(resumen_potencialidad)
+
+#10. grafico de potencialidad promedio de provincia
+plot_pot_prov <- ggplot(tabla_potencialidad_prov,
+        aes(x = reorder(provincia, potencialidad_promedio),
+            y = potencialidad_promedio)) +
+  geom_col(fill = "red") +
+  coord_flip() +
+  labs(
+    title = "Potencialidad promedio por provincia de bienes no exportados",
+    x = "Provincia",
+    y = "Potencialidad promedio"
+  )
+print(plot_pot_prov)
+
+
+#11 potencialidad por seccion a nivel nacional (filtrado, agrupado y calculo de estadisticos)
+potencialidad_seccion <- base_unida %>%
+  filter(estado_productivo == "No exporta") %>%
+  group_by(seccion) %>%
+  summarise(
+    n_oportunidades = n(),
+    media_potencialidad = mean(potencialidad, na.rm = TRUE),
+    mediana_potencialidad = median(potencialidad, na.rm = TRUE),
+    sd_potencialidad = sd(potencialidad, na.rm = TRUE),
+    suma_potencialidad = sum(potencialidad, na.rm = TRUE)
+  ) %>%
+  arrange(desc(media_potencialidad))
+
+print(potencialidad_seccion)
+
+#12 grafico de potencialidad promedio por seccion
+plot_pot_seccion <- ggplot(potencialidad_seccion,
+                           aes(x = reorder(seccion, media_potencialidad), y = media_potencialidad)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(
+    title = "Potencialidad promedio por seccion (nacional)",
+    x = "seccion",
+    y = "potencialidad promedio"
+  )
+
+print(plot_pot_seccion)
