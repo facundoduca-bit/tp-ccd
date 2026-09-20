@@ -169,3 +169,33 @@ plot_pot_seccion <- ggplot(potencialidad_seccion,
   )
 
 print(plot_pot_seccion)
+
+#13 tabla resumen para contar productos VCR por provincia y seccion
+tabla_vcr_seccion <- base_unida %>%
+  filter(tiene_vcr == 1) %>%
+  group_by(provincia, seccion) %>%
+  summarise(cant_vcr_seccion = n(), .groups = "drop") %>%
+  group_by(provincia) %>%
+  mutate(
+    total_vcr_provincia = sum(cant_vcr_seccion),
+    proporcion_seccion = cant_vcr_seccion / total_vcr_provincia
+  )
+
+print(tabla_vcr_seccion)
+
+#14 grafico para cantidad de VCR por provincia y seccion
+plot_proporcion_seccion <- ggplot(base_unida %>% filter(tiene_vcr == 1),
+                                  aes(x = reorder(provincia, provincia, function(x) length(x)), fill = seccion)) +
+  geom_bar(position = "fill") +
+  coord_flip() +
+  theme_minimal() +
+  theme(legend.position = "bottom", legend.text = element_text(size = 8)) +
+  labs(
+    tittle = "Cantidad VCR por provincia divididos por seccion",
+    x = "provincia",
+    y = "Proporción sobre el total del VCR provincial",
+    fill = "Sección"
+  ) + 
+  scale_y_continuous(labels = scales::percent)
+
+print(plot_proporcion_seccion)
