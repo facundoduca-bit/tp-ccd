@@ -316,3 +316,112 @@ outliers_provincia <- tabla_provincias %>%
 
 outliers_provincia
 
+
+# !!!METODO DE INFERENCIA ESTADISTICA(parte 3)!!!
+
+# 1. revisar cantidad de productos con VCR por seccion
+productos_vcr %>%
+  count(seccion, sort = TRUE)
+
+# 2. calcular estadisticas descriptivas de complejidad por seccion
+resumen_anova <- productos_vcr %>%
+  group_by(seccion) %>%
+  summarise(
+    n = n(),
+    media = mean(complejidad_producto),
+    mediana = median(complejidad_producto),
+    desvio = sd(complejidad_producto),
+    minimo = min(complejidad_producto),
+    maximo = max(complejidad_producto),
+    .groups = "drop"
+  )
+
+resumen_anova
+
+# 3. crear el modelo ANOVA para comparar complejidad entre secciones
+modelo_anova <- aov(
+  complejidad_producto ~ seccion,
+  data = productos_vcr
+)
+
+modelo_anova
+
+# 4. revisar normalidad de los residuos del modelo con QQ-plot
+qqnorm(
+  residuals(modelo_anova),
+  main = "QQ-plot de residuos del ANOVA"
+)
+qqline(residuals(modelo_anova))
+
+
+# 5. comparación de los desvios entre secciones para evaluar homogeneidad de varianzas
+desvios_seccion <- productos_vcr %>%
+  group_by(seccion) %>%
+  summarise(
+    desvio = sd(complejidad_producto),
+    .groups = "drop"
+  )
+
+desvios_seccion
+
+cociente_desvios <- max(desvios_seccion$desvio) /
+  min(desvios_seccion$desvio)
+
+cociente_desvios
+
+# 6. obtener resultado del ANOVA clasico como referencia
+resultado_anova <- summary(modelo_anova)
+
+resultado_anova
+
+# 7. calcular tamaño del efecto mediante eta cuadrado
+tabla_anova <- summary(modelo_anova)[[1]]
+
+eta_cuadrado <- tabla_anova$`Sum Sq`[1] /
+  sum(tabla_anova$`Sum Sq`)
+
+eta_cuadrado
+
+
+# 8. aplicar ANOVA de Welch porque las varianzas entre secciones no son homogeneas
+anova_welch <- oneway.test(
+  complejidad_producto ~ seccion,
+  data = productos_vcr,
+  var.equal = FALSE
+)
+
+anova_welch
+
+install.packages("rstatix")
+
+# 9. comparar que pares de secciones difieren mediante Games-Howell
+posthoc_games <- rstatix::games_howell_test(
+  productos_vcr,
+  complejidad_producto ~ seccion
+)
+
+posthoc_games %>%
+  select(
+    group1,
+    group2,
+    estimate,
+    conf.low,
+    conf.high,
+    p.adj
+  ) %>%
+  arrange(p.adj) %>%
+  print(n = Inf)
+
+# 10. comprobar sensibilidad del resultado a los outliers detectados
+productos_vcr_sin_outliers <- productos_vcr %>%
+  filter(
+    !cod_ncm_6d %in% outliers_producto$cod_ncm_6d
+  )
+
+welch_sin_outliers <- oneway.test(
+  complejidad_producto ~ seccion,
+  data = productos_vcr_sin_outliers,
+  var.equal = FALSE
+)
+
+welch_sin_outliers
