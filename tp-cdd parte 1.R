@@ -425,3 +425,52 @@ welch_sin_outliers <- oneway.test(
 )
 
 welch_sin_outliers
+
+
+### PARTE 4: ANALISIS CUANTITATIVO: INDICE DE THEIL ###
+
+
+# 1. Filtrar la base y ajustar la escala de complejidad a valores positivos
+base_theil <- base_unida %>%
+  filter(tiene_vcr == 1, !is.na(complejidad_producto), !is.na(seccion)) %>%
+  # Desplazamos el mínimo a 1 para habilitar el cálculo de logaritmos
+  mutate(complejidad_positiva = complejidad_producto - min(complejidad_producto) + 1)
+
+# 2. Definir parámetros globales del sistema
+c_media_global <- mean(base_theil$complejidad_positiva)
+N_global <- nrow(base_theil)
+
+# 3. Calcular la descomposición sectorial (Inter-grupos e Intra-grupos)
+descomposicion_theil <- base_theil %>%
+  group_by(seccion) %>%
+  summarise(
+    N_j = n(),
+    c_media_j = mean(complejidad_positiva),
+    # Desigualdad interna (Theil particular del sector)
+    T_j = sum((complejidad_positiva / c_media_j) * log(complejidad_positiva / c_media_j)) / N_j,
+    suma_c_j = sum(complejidad_positiva),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    # Ponderador sectorial (cuota del sector sobre la complejidad total)
+    s_j = suma_c_j / sum(suma_c_j),
+    # Componente Between-group (Inter-sectores)
+    T_entre_j = s_j * log(c_media_j / c_media_global),
+    # Componente Within-group (Intra-sectores ponderado)
+    T_dentro_j = s_j * T_j
+  )
+
+# 4. Consolidar el resultado final de la métrica y calcular proporciones
+resumen_theil <- tibble(
+  Theil_Entre_Sectores = sum(descomposicion_theil$T_entre_j),
+  Theil_Dentro_Sectores = sum(descomposicion_theil$T_dentro_j),
+  Theil_Total = Theil_Entre_Sectores + Theil_Dentro_Sectores
+) %>%
+  mutate(
+    Peso_Estructural = round((Theil_Entre_Sectores / Theil_Total) * 100, 2),
+    Peso_Particular = round((Theil_Dentro_Sectores / Theil_Total) * 100, 2)
+  )
+
+# Imprimir la tabla detallada por sección y el resumen global
+print(descomposicion_theil %>% arrange(desc(T_entre_j)))
+print(resumen_theil)
