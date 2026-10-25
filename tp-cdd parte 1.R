@@ -1,4 +1,6 @@
 library(tidyverse)
+install.packages("rstatix")
+
 #1. leer archivos CSV
 base_da_1 <- read_csv("base_da_1 (1).csv", show_col_types = FALSE)
 base_da_2 <- read_csv("base_da_2 (1).csv", show_col_types = FALSE)
@@ -392,8 +394,6 @@ anova_welch <- oneway.test(
 
 anova_welch
 
-install.packages("rstatix")
-
 # 9. comparar que pares de secciones difieren mediante Games-Howell
 posthoc_games <- rstatix::games_howell_test(
   productos_vcr,
@@ -474,3 +474,111 @@ resumen_theil <- tibble(
 # Imprimir la tabla detallada por sección y el resumen global
 print(descomposicion_theil %>% arrange(desc(T_entre_j)))
 print(resumen_theil)
+
+
+#### Evaluamos para sectores estructurales con mayor brecha si tienen correlación con la complejidad provincial
+
+
+# 1. Definir los sectores estructurales a analizar
+sectores_clave <- c("Agro, Alimentos y Bebidas", "Químicos", "Maquinaria")
+
+# 2. Obtener los parámetros base de cada provincia (Total VCR y Complejidad)
+totales_prov <- base_unida %>%
+  filter(tiene_vcr == 1, !is.na(complejidad_provincia)) %>%
+  group_by(provincia) %>%
+  summarise(
+    total_vcr_prov = n(),
+    complejidad_prov = first(complejidad_provincia),
+    .groups = "drop"
+  )
+
+# 3. Calcular la cuota de mercado individual asegurando la inclusión de los ceros
+correlacion_individual <- base_unida %>%
+  filter(tiene_vcr == 1) %>%
+  count(provincia, seccion, name = "cant_sector") %>%
+  # Crucial: Rellenar con 0 si una provincia no exporta nada de ese sector
+  complete(provincia, seccion, fill = list(cant_sector = 0)) %>%
+  filter(seccion %in% sectores_clave) %>%
+  inner_join(totales_prov, by = "provincia") %>%
+  mutate(peso_sector = cant_sector / total_vcr_prov)
+
+# 4. Calcular el coeficiente de Pearson y p-value por cada sector
+resultados_correlacion <- correlacion_individual %>%
+  group_by(seccion) %>%
+  summarise(
+    correlacion = cor(peso_sector, complejidad_prov),
+    p_value = cor.test(peso_sector, complejidad_prov)$p.value,
+    .groups = "drop"
+  ) %>%
+  arrange(desc(correlacion))
+
+print(resultados_correlacion)
+
+# 5. Generar un gráfico de dispersión facetado (un panel por sector)
+plot_correlacion_indiv <- ggplot(correlacion_individual, 
+                                 aes(x = peso_sector, y = complejidad_prov)) +
+  geom_point(color = "#2c3e50", size = 2, alpha = 0.7) +
+  geom_smooth(method = "lm", color = "#e74c3c", fill = "#e74c3c", alpha = 0.2, se = TRUE) +
+  geom_text(aes(label = provincia), vjust = -1, size = 2.5, check_overlap = TRUE) +
+  facet_wrap(~ seccion, scales = "free_x") +
+  labs(
+    title = "Impacto Sectorial en la Complejidad Provincial",
+    subtitle = "Análisis individualizado por sector estructural",
+    x = "Participación del sector (% del total con VCR provincial)",
+    y = "Índice de Complejidad Provincial"
+  ) +
+  scale_x_continuous(labels = scales::percent) +
+  theme_minimal() +
+  theme(strip.text = element_text(face = "bold", size = 10))
+
+print(plot_correlacion_indiv)
+
+
+# 6. Identificamos provincias sin productos con VCR en sectores clave para explicar sesgo
+provincias_cero_exportaciones <- correlacion_individual %>%
+  filter(cant_sector == 0) %>%
+  select(seccion, provincia) %>%
+  arrange(seccion, provincia)
+
+print(provincias_cero_exportaciones)
+
+
+### Evaluamos sesgo positivo de "maquinarias" y "quimicos" por las provincias sin VCR
+
+
+# 1. Definir los sectores bajo análisis de sesgo
+sectores_sesgo <- c("Químicos", "Maquinaria")
+
+# 2. Calcular métricas con la muestra completa (incluyendo provincias con 0%)
+sesgo_con_ceros <- correlacion_individual %>%
+  filter(seccion %in% sectores_sesgo) %>%
+  group_by(seccion) %>%
+  summarise(
+    correlacion_con_ceros = cor(peso_sector, complejidad_prov),
+    # Dividimos por 100 para interpretar el cambio por 1 punto porcentual (1%)
+    impacto_1pp_con_ceros = coef(lm(complejidad_prov ~ peso_sector))[2] / 100,
+    .groups = "drop"
+  )
+
+# 3. Calcular métricas aislando el sesgo (excluyendo provincias con 0%)
+sesgo_sin_ceros <- correlacion_individual %>%
+  filter(seccion %in% sectores_sesgo, peso_sector > 0) %>%
+  group_by(seccion) %>%
+  summarise(
+    correlacion_sin_ceros = cor(peso_sector, complejidad_prov),
+    impacto_1pp_sin_ceros = coef(lm(complejidad_prov ~ peso_sector))[2] / 100,
+    .groups = "drop"
+  )
+
+# 4. Consolidar resultados y calcular la magnitud absoluta del sesgo
+analisis_magnitud_sesgo <- sesgo_con_ceros %>%
+  inner_join(sesgo_sin_ceros, by = "seccion") %>%
+  mutate(
+    sesgo_en_correlacion = correlacion_con_ceros - correlacion_sin_ceros,
+    sesgo_en_impacto = impacto_1pp_con_ceros - impacto_1pp_sin_ceros
+  ) %>%
+  select(seccion, correlacion_con_ceros, correlacion_sin_ceros, sesgo_en_correlacion,
+         impacto_1pp_con_ceros, impacto_1pp_sin_ceros, sesgo_en_impacto)
+
+# Imprimir la tabla comparativa transpuestas para facilitar la lectura
+print(t(analisis_magnitud_sesgo))
