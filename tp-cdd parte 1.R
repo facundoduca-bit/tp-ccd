@@ -1,5 +1,5 @@
 library(tidyverse)
-install.packages("rstatix")
+# install.packages("rstatix")
 
 #1. leer archivos CSV
 base_da_1 <- read_csv("base_da_1 (1).csv", show_col_types = FALSE)
@@ -440,6 +440,12 @@ base_theil <- base_unida %>%
 c_media_global <- mean(base_theil$complejidad_positiva)
 N_global <- nrow(base_theil)
 
+# 2.1 Calcular el Theil observado directamente para verificar la descomposicion
+theil_observado <- mean(
+  (base_theil$complejidad_positiva / c_media_global) *
+    log(base_theil$complejidad_positiva / c_media_global)
+)
+
 # 3. Calcular la descomposición sectorial (Inter-grupos e Intra-grupos)
 descomposicion_theil <- base_theil %>%
   group_by(seccion) %>%
@@ -460,15 +466,17 @@ descomposicion_theil <- base_theil %>%
     T_dentro_j = s_j * T_j
   )
 
-# 4. Consolidar el resultado final de la métrica y calcular proporciones
+# 4. Consolidar el resultado y verificar que la descomposicion cierre
 resumen_theil <- tibble(
+  Theil_Observado = theil_observado,
   Theil_Entre_Sectores = sum(descomposicion_theil$T_entre_j),
-  Theil_Dentro_Sectores = sum(descomposicion_theil$T_dentro_j),
-  Theil_Total = Theil_Entre_Sectores + Theil_Dentro_Sectores
+  Theil_Dentro_Sectores = sum(descomposicion_theil$T_dentro_j)
 ) %>%
   mutate(
-    Peso_Estructural = round((Theil_Entre_Sectores / Theil_Total) * 100, 2),
-    Peso_Particular = round((Theil_Dentro_Sectores / Theil_Total) * 100, 2)
+    Theil_Descompuesto = Theil_Entre_Sectores + Theil_Dentro_Sectores,
+    Diferencia = Theil_Observado - Theil_Descompuesto,
+    Peso_Entre = round((Theil_Entre_Sectores / Theil_Observado) * 100, 2),
+    Peso_Dentro = round((Theil_Dentro_Sectores / Theil_Observado) * 100, 2)
   )
 
 # Imprimir la tabla detallada por sección y el resumen global
@@ -543,7 +551,7 @@ provincias_cero_exportaciones <- correlacion_individual %>%
 print(provincias_cero_exportaciones)
 
 
-### Evaluamos sesgo positivo de "maquinarias" y "quimicos" por las provincias sin VCR
+### Analisis de sensibilidad a la inclusion de provincias con participacion sectorial igual a cero
 
 
 # 1. Definir los sectores bajo análisis de sesgo
