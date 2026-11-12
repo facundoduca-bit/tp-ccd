@@ -770,7 +770,7 @@ grafico_exploratorio <- ggplot(
     "Cluster 1" = "#0072B2",
     "Cluster 2" = "#E69F00",
     "Cluster 3" = "#009E73",
-    "Cluster 4" = "#CC79A7"
+    "Cluster 4" = "#CC79A7",
     "Sin productos con VCR" = "grey60"
   )) +
   scale_x_continuous(labels = label_dollar(prefix = "USD ", big.mark = ".")) +
