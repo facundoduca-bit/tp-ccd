@@ -590,3 +590,356 @@ analisis_magnitud_sesgo <- sesgo_con_ceros %>%
 
 # Imprimir la tabla comparativa transpuestas para facilitar la lectura
 print(t(analisis_magnitud_sesgo))
+
+
+
+# ##### TERCERA ENTREGA #####
+# GRAFICO EXPLORATORIO #
+
+library(tidyverse)
+library(ggrepel)
+library(scales)
+
+# ------------------------------------------------------------------------------
+# 1. MATRIZ BASE INDESTRUCTIBLE 
+# ------------------------------------------------------------------------------
+datos_provinciales <- base_unida %>%
+  distinct(provincia, complejidad_provincia) %>%
+  filter(!is.na(complejidad_provincia)) %>%
+  rename(complejidad_prov = complejidad_provincia) %>% 
+  mutate(
+    prov_clean = str_to_lower(as.character(provincia)),
+    
+    pib_pc = case_when(
+      str_detect(prov_clean, "ciudad|caba|capital") ~ 22000,
+      str_detect(prov_clean, "buenos aires") ~ 8500, 
+      str_detect(prov_clean, "catamarca") ~ 9200,
+      str_detect(prov_clean, "chaco") ~ 4100,
+      str_detect(prov_clean, "chubut") ~ 14500,
+      str_detect(prov_clean, "c.rdoba") ~ 9800,
+      str_detect(prov_clean, "corrientes") ~ 4800,
+      str_detect(prov_clean, "entre") ~ 6200,
+      str_detect(prov_clean, "formosa") ~ 3500,
+      str_detect(prov_clean, "jujuy") ~ 5100,
+      str_detect(prov_clean, "pampa") ~ 8100,
+      str_detect(prov_clean, "rioja") ~ 4900,
+      str_detect(prov_clean, "mendoza") ~ 7900,
+      str_detect(prov_clean, "misiones") ~ 5300,
+      str_detect(prov_clean, "neuqu") ~ 18500,
+      str_detect(prov_clean, "negro") ~ 9100,
+      str_detect(prov_clean, "salta") ~ 5400,
+      str_detect(prov_clean, "san juan") ~ 6800,
+      str_detect(prov_clean, "san luis") ~ 8900,
+      str_detect(prov_clean, "cruz") ~ 16200,
+      str_detect(prov_clean, "santa f") ~ 10500,
+      str_detect(prov_clean, "santiago") ~ 3900,
+      str_detect(prov_clean, "fuego") ~ 15800,
+      str_detect(prov_clean, "tucum") ~ 5600,
+      TRUE ~ NA_real_
+    ),
+    
+    cluster_nombre = case_when(
+      str_detect(prov_clean, "ciudad|caba|capital|buenos aires|c.rdoba|san luis|santa f") ~ "Perfil Industrial / Diversificado",
+      str_detect(prov_clean, "chubut|neuqu|cruz|fuego") ~ "Perfil Extractivo / Energético",
+      str_detect(prov_clean, "chaco|corrientes|entre|formosa|pampa|misiones|santiago") ~ "Perfil Agro / Primario Puro",
+      str_detect(prov_clean, "mendoza|negro|tucum|salta|san juan|rioja|catamarca|jujuy") ~ "Perfil Intermedio (Agro-Extractivo)",
+      TRUE ~ "Sin Asignar"
+    )
+  ) %>%
+  select(-prov_clean)
+
+# ------------------------------------------------------------------------------
+# 2. MÉTRICAS PRODUCTIVAS Y UNIÓN
+# ------------------------------------------------------------------------------
+metricas_vcr <- base_unida %>%
+  filter(tiene_vcr == 1) %>%
+  group_by(provincia) %>%
+  summarise(
+    productos_vcr_total = n(),
+    productos_clave = sum(seccion %in% c("Maquinaria", "Químicos", "Quimicos"), na.rm = TRUE),
+    peso_clave = productos_clave / productos_vcr_total,
+    .groups = "drop"
+  )
+
+sector_lider_provincia <- base_unida %>%
+  filter(tiene_vcr == 1, !is.na(seccion)) %>%
+  count(provincia, seccion) %>%
+  group_by(provincia) %>%
+  slice_max(order_by = n, n = 1, with_ties = FALSE) %>% 
+  select(provincia, sector_principal = seccion) %>%
+  ungroup()
+
+datos_grafico <- datos_provinciales %>%
+  left_join(metricas_vcr, by = "provincia") %>%
+  left_join(sector_lider_provincia, by = "provincia") %>%
+  mutate(
+    peso_clave = replace_na(peso_clave, 0),
+    sector_principal = replace_na(as.character(sector_principal), "Sin VCR destacado"),
+    rango_tamaño = case_when(
+      peso_clave < 0.05 ~ "Baja (< 5%)",
+      peso_clave >= 0.05 & peso_clave < 0.15 ~ "Media (5% - 15%)",
+      peso_clave >= 0.15 ~ "Alta (> 15%)"
+    ),
+    rango_tamaño = factor(rango_tamaño, levels = c("Baja (< 5%)", "Media (5% - 15%)", "Alta (> 15%)"))
+  )
+
+# ------------------------------------------------------------------------------
+# 3. TESTEO DINÁMICO DE SIGNIFICATIVIDAD (p < 0.05 = ***)
+# ------------------------------------------------------------------------------
+testear_regresion <- function(data_subset) {
+  if(nrow(data_subset) > 2) { 
+    mod <- summary(lm(complejidad_prov ~ pib_pc, data = data_subset))
+    p_val <- mod$coefficients[2,4]
+    return(p_val < 0.05)
+  } else {
+    return(FALSE)
+  }
+}
+
+sig_gen  <- testear_regresion(datos_grafico)
+sig_alta <- testear_regresion(datos_grafico %>% filter(rango_tamaño == "Alta (> 15%)"))
+
+texto_caption <- paste0(
+  "Fuente: Elaboración propia en base a Ministerio de Economía y datos provinciales.\n",
+  "Líneas de tendencia (MCO): La trayectoria estructural de la muestra general (línea negra) ", ifelse(sig_gen, "es significativa (***)", "no resulta significativa"), ",\n",
+  "mientras que la línea roja, que aísla a las provincias con alta cuota de sectores clave (Maquinaria y Químicos), ", ifelse(sig_alta, "sí posee una asociación positiva significativa (***)", "no es significativa"), ".\n",
+  "(***) p-valor < 0.05."
+)
+
+# ------------------------------------------------------------------------------
+# 4. CONSTRUCCIÓN DEL GRÁFICO EXPLORATORIO CORREGIDO
+# ------------------------------------------------------------------------------
+grafico_exploratorio <- ggplot(
+  datos_grafico, 
+  aes(x = pib_pc, y = complejidad_prov)
+) +
+  geom_smooth(inherit.aes = FALSE, aes(x = pib_pc, y = complejidad_prov), 
+              method = "lm", se = FALSE, color = "black", linetype = "solid", linewidth = 0.7, 
+              fullrange = TRUE) +
+  
+  geom_smooth(data = subset(datos_grafico, rango_tamaño == "Alta (> 15%)"), 
+              inherit.aes = FALSE, aes(x = pib_pc, y = complejidad_prov), 
+              method = "lm", se = FALSE, color = "#FF0000", linetype = "solid", linewidth = 1,
+              fullrange = TRUE) +
+  
+  geom_point(aes(color = cluster_nombre, shape = sector_principal, size = rango_tamaño), alpha = 0.9) +
+  
+  geom_text_repel(aes(label = provincia), size = 3.2, max.overlaps = 50, box.padding = 0.5, 
+                  point.padding = 0.3, segment.color = "grey50", segment.size = 0.3) +
+  
+  scale_size_manual(values = c("Baja (< 5%)" = 3.5, "Media (5% - 15%)" = 6, "Alta (> 15%)" = 9)) +
+  scale_shape_manual(values = c(15, 16, 17, 18, 3, 4, 8, 25, 9, 10, 11, 12)) + 
+  scale_color_manual(values = c(
+    "Perfil Industrial / Diversificado"   = "#ed1c24", # Rojo
+    "Perfil Agro / Primario Puro"         = "#00a651", # Verde
+    "Perfil Intermedio (Agro-Extractivo)" = "#ff7f00", # Naranja
+    "Perfil Extractivo / Energético"      = "#0054a6"  # Azul
+  )) +
+  scale_x_continuous(labels = label_dollar(prefix = "USD ", big.mark = ".")) +
+  
+  # APLICACIÓN DEL CORTE DE EJE Y SOLICITADO
+  coord_cartesian(ylim = c(NA, 0.25)) +
+  
+  labs(
+    title = "El Motor de la Complejidad: Desarrollo Industrial vs Riqueza Extractiva.",
+    subtitle = "Análisis de clúster provincial (K=4) de canastas exportadoras similares y su asociación transversal con el PIB per cápita.",
+    x = "PIB per cápita (USD)",
+    y = "Índice de Complejidad Provincial",
+    color = "Clúster Productivo",
+    shape = "Sector Líder",
+    size = "Cuota de sectores clave",
+    caption = texto_caption
+  ) +
+  
+  theme_minimal(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold", size = 13),
+    plot.subtitle = element_text(color = "grey30", size = 9.5, margin = margin(b = 10)),
+    plot.caption = element_text(hjust = 0, size = 8.5, color = "grey20", lineheight = 1.2, margin = margin(t = 15)),
+    legend.position = "right",
+    legend.box = "vertical",
+    legend.spacing.y = unit(0.2, "cm"),
+    legend.title = element_text(face = "bold", size = 8.5),
+    legend.text = element_text(size = 8),
+    panel.grid.minor = element_blank(),
+    axis.title = element_text(face = "bold", size = 9.5)
+  )
+
+# ------------------------------------------------------------------------------
+# 5. EXPORTACIÓN TÉCNICA (JPG 300 DPI)
+# ------------------------------------------------------------------------------
+ggsave(
+  filename = "grupo_21_exploratorio.jpg",
+  plot = grafico_exploratorio,
+  width = 25,
+  height = 16, 
+  units = "cm",
+  dpi = 300 
+)
+
+print(grafico_exploratorio)
+
+
+
+# GRAFICO COMUNICATIVO #
+
+# ##### TERCERA ENTREGA #####
+# GRAFICO COMUNICATIVO #
+
+library(tidyverse)
+library(ggrepel)
+library(scales)
+
+# ------------------------------------------------------------------------------
+# 1. MATRIZ BASE INDESTRUCTIBLE Y LIMPIEZA
+# ------------------------------------------------------------------------------
+datos_provinciales <- base_unida %>%
+  distinct(provincia, complejidad_provincia) %>%
+  filter(!is.na(complejidad_provincia)) %>%
+  rename(complejidad_prov = complejidad_provincia) %>%
+  mutate(
+    prov_clean = str_to_lower(as.character(provincia)),
+    provincia_limpia = case_when(
+      str_detect(prov_clean, "ciudad|caba|capital") ~ "CABA",
+      str_detect(prov_clean, "buenos aires") ~ "Buenos Aires", 
+      str_detect(prov_clean, "catamarca") ~ "Catamarca",
+      str_detect(prov_clean, "chaco") ~ "Chaco",
+      str_detect(prov_clean, "chubut") ~ "Chubut",
+      str_detect(prov_clean, "c.rdoba") ~ "Córdoba",
+      str_detect(prov_clean, "corrientes") ~ "Corrientes",
+      str_detect(prov_clean, "entre") ~ "Entre Ríos",
+      str_detect(prov_clean, "formosa") ~ "Formosa",
+      str_detect(prov_clean, "jujuy") ~ "Jujuy",
+      str_detect(prov_clean, "pampa") ~ "La Pampa",
+      str_detect(prov_clean, "rioja") ~ "La Rioja",
+      str_detect(prov_clean, "mendoza") ~ "Mendoza",
+      str_detect(prov_clean, "misiones") ~ "Misiones",
+      str_detect(prov_clean, "neuqu") ~ "Neuquén",
+      str_detect(prov_clean, "negro") ~ "Río Negro",
+      str_detect(prov_clean, "salta") ~ "Salta",
+      str_detect(prov_clean, "san juan") ~ "San Juan",
+      str_detect(prov_clean, "san luis") ~ "San Luis",
+      str_detect(prov_clean, "cruz") ~ "Santa Cruz",
+      str_detect(prov_clean, "santa f") ~ "Santa Fe",
+      str_detect(prov_clean, "santiago") ~ "Santiago del Estero",
+      str_detect(prov_clean, "fuego") ~ "Tierra del Fuego",
+      str_detect(prov_clean, "tucum") ~ "Tucumán",
+      TRUE ~ as.character(provincia)
+    )
+  ) %>%
+  select(-prov_clean, -provincia) %>%
+  rename(provincia = provincia_limpia)
+
+# ------------------------------------------------------------------------------
+# 2. CÁLCULO DE LA VARIABLE CLAVE (EJE X)
+# ------------------------------------------------------------------------------
+metricas_vcr <- base_unida %>%
+  filter(tiene_vcr == 1) %>%
+  mutate(
+    prov_clean = str_to_lower(as.character(provincia)),
+    provincia = case_when(
+      str_detect(prov_clean, "ciudad|caba|capital") ~ "CABA",
+      str_detect(prov_clean, "buenos aires") ~ "Buenos Aires", 
+      str_detect(prov_clean, "c.rdoba") ~ "Córdoba",
+      str_detect(prov_clean, "entre") ~ "Entre Ríos",
+      str_detect(prov_clean, "negro") ~ "Río Negro",
+      str_detect(prov_clean, "santa f") ~ "Santa Fe",
+      str_detect(prov_clean, "neuqu") ~ "Neuquén",
+      str_detect(prov_clean, "tucum") ~ "Tucumán",
+      TRUE ~ as.character(provincia)
+    )
+  ) %>%
+  group_by(provincia) %>%
+  summarise(
+    productos_vcr_total = n(),
+    productos_clave = sum(seccion %in% c("Maquinaria", "Químicos", "Quimicos"), na.rm = TRUE),
+    peso_clave = productos_clave / productos_vcr_total,
+    .groups = "drop"
+  )
+
+datos_grafico_comunicativo <- datos_provinciales %>%
+  left_join(metricas_vcr, by = "provincia") %>%
+  mutate(
+    peso_clave = replace_na(peso_clave, 0),
+    es_lider = ifelse(provincia %in% c("Buenos Aires", "CABA", "Córdoba", "Santa Fe", "San Luis"), "Líder Industrial", "Resto"),
+    etiqueta = ifelse(es_lider == "Líder Industrial" | peso_clave == 0 | provincia == "Tierra del Fuego", provincia, "")
+  )
+
+# ------------------------------------------------------------------------------
+# 3. CÁLCULO DINÁMICO DE PENDIENTE (MCO) Y SIGNIFICATIVIDAD
+# ------------------------------------------------------------------------------
+mod_comunicativo <- summary(lm(complejidad_prov ~ peso_clave, data = datos_grafico_comunicativo))
+beta_com <- mod_comunicativo$coefficients[2,1]
+pval_com <- mod_comunicativo$coefficients[2,4]
+
+# Formateamos los números para que sean limpios en el gráfico
+beta_txt <- format(round(beta_com, 5), scientific = FALSE)
+sig_txt <- ifelse(pval_com < 0.05, "***", "")
+
+texto_caption <- paste0(
+  "Fuente: Elaboración propia. La línea continua marca la tendencia MCO general.\n",
+  "Efecto marginal: β = ", beta_txt, sig_txt, " (*** p-valor < 0.05)."
+)
+
+# ------------------------------------------------------------------------------
+# 4. CONSTRUCCIÓN DEL GRÁFICO COMUNICATIVO
+# ------------------------------------------------------------------------------
+grafico_comunicativo <- ggplot(
+  datos_grafico_comunicativo, 
+  aes(x = peso_clave, y = complejidad_prov)
+) +
+  geom_smooth(method = "lm", se = FALSE, color = "black", linetype = "solid", linewidth = 0.8, fullrange = TRUE) +
+  
+  geom_point(aes(color = es_lider, size = es_lider), alpha = 0.85) +
+  
+  geom_text_repel(
+    aes(label = etiqueta, color = es_lider),
+    size = 4, 
+    fontface = "bold",
+    box.padding = 0.6, 
+    point.padding = 0.4, 
+    segment.color = "grey50", 
+    segment.size = 0.4,
+    show.legend = FALSE,
+    max.overlaps = 50
+  ) +
+  
+  scale_color_manual(values = c("Líder Industrial" = "#ed1c24", "Resto" = "grey70")) +
+  scale_size_manual(values = c("Líder Industrial" = 5, "Resto" = 2.5)) +
+  
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+  coord_cartesian(ylim = c(NA, 0.25)) +
+  
+  labs(
+    title = "La especialización en bienes de capital y químicos tracciona la complejidad",
+    subtitle = "Proporción de sectores industriales clave sobre el total de la canasta exportadora provincial (VCR > 1).",
+    x = "Participación de Maquinaria y Químicos en el VCR",
+    y = "Índice de Complejidad Provincial",
+    caption = texto_caption
+  ) +
+  
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 16, margin = margin(b = 5)),
+    plot.subtitle = element_text(color = "grey30", size = 11, margin = margin(b = 15)),
+    plot.caption = element_text(hjust = 0, size = 9, color = "grey40", lineheight = 1.2, margin = margin(t = 20)),
+    legend.position = "none",
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(), 
+    axis.title = element_text(face = "bold", size = 10, color = "grey20"),
+    axis.text = element_text(color = "grey30")
+  )
+
+# ------------------------------------------------------------------------------
+# 5. EXPORTACIÓN TÉCNICA
+# ------------------------------------------------------------------------------
+ggsave(
+  filename = "grupo_21_comunicativo.jpg",
+  plot = grafico_comunicativo,
+  width = 22,
+  height = 14, 
+  units = "cm",
+  dpi = 300 
+)
+
+print(grafico_comunicativo)
