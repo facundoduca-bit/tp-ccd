@@ -783,6 +783,7 @@ print(grafico_exploratorio)
 
 # GRAFICO COMUNICATIVO #
 
+
 # ##### TERCERA ENTREGA #####
 # GRAFICO COMUNICATIVO #
 
@@ -831,7 +832,7 @@ datos_provinciales <- base_unida %>%
   rename(provincia = provincia_limpia)
 
 # ------------------------------------------------------------------------------
-# 2. CÁLCULO DE LA VARIABLE CLAVE (EJE X)
+# 2. CÁLCULO DE LA VARIABLE CLAVE Y ETIQUETADO INTELIGENTE
 # ------------------------------------------------------------------------------
 metricas_vcr <- base_unida %>%
   filter(tiene_vcr == 1) %>%
@@ -857,12 +858,23 @@ metricas_vcr <- base_unida %>%
     .groups = "drop"
   )
 
+# Definimos los grupos para el etiquetado dinámico
+lideres_industriales <- c("Buenos Aires", "CABA", "Córdoba", "Santa Fe", "San Luis")
+provincias_silenciadas <- c("Entre Ríos", "Río Negro", "Tierra del Fuego", "Santa Cruz")
+
+# Calculamos los 3 puntos grises más altos (excluyendo líderes y silenciados)
+top3_grises <- metricas_vcr %>%
+  filter(!provincia %in% c(lideres_industriales, provincias_silenciadas)) %>%
+  slice_max(order_by = peso_clave, n = 3, with_ties = FALSE) %>%
+  pull(provincia)
+
 datos_grafico_comunicativo <- datos_provinciales %>%
   left_join(metricas_vcr, by = "provincia") %>%
   mutate(
     peso_clave = replace_na(peso_clave, 0),
-    es_lider = ifelse(provincia %in% c("Buenos Aires", "CABA", "Córdoba", "Santa Fe", "San Luis"), "Líder Industrial", "Resto"),
-    etiqueta = ifelse(es_lider == "Líder Industrial" | peso_clave == 0 | provincia == "Tierra del Fuego", provincia, "")
+    es_lider = ifelse(provincia %in% lideres_industriales, "Líder Industrial", "Resto"),
+    # Asignamos etiqueta solo a los líderes o a los 3 mejores grises
+    etiqueta = ifelse(provincia %in% lideres_industriales | provincia %in% top3_grises, provincia, "")
   )
 
 # ------------------------------------------------------------------------------
@@ -872,7 +884,6 @@ mod_comunicativo <- summary(lm(complejidad_prov ~ peso_clave, data = datos_grafi
 beta_com <- mod_comunicativo$coefficients[2,1]
 pval_com <- mod_comunicativo$coefficients[2,4]
 
-# Formateamos los números para que sean limpios en el gráfico
 beta_txt <- format(round(beta_com, 5), scientific = FALSE)
 sig_txt <- ifelse(pval_com < 0.05, "***", "")
 
