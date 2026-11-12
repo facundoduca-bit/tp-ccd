@@ -834,63 +834,83 @@ datos_provinciales <- base_unida %>%
 # ------------------------------------------------------------------------------
 # 2. CÁLCULO DE LA VARIABLE CLAVE Y ETIQUETADO INTELIGENTE
 # ------------------------------------------------------------------------------
-metricas_vcr <- base_unida %>%
-  filter(tiene_vcr == 1) %>%
-  mutate(
-    prov_clean = str_to_lower(as.character(provincia)),
-    provincia = case_when(
-      str_detect(prov_clean, "ciudad|caba|capital") ~ "CABA",
-      str_detect(prov_clean, "buenos aires") ~ "Buenos Aires", 
-      str_detect(prov_clean, "c.rdoba") ~ "Córdoba",
-      str_detect(prov_clean, "entre") ~ "Entre Ríos",
-      str_detect(prov_clean, "negro") ~ "Río Negro",
-      str_detect(prov_clean, "santa f") ~ "Santa Fe",
-      str_detect(prov_clean, "neuqu") ~ "Neuquén",
-      str_detect(prov_clean, "tucum") ~ "Tucumán",
-      TRUE ~ as.character(provincia)
-    )
-  ) %>%
+# Cluster de provincias segun la composicion sectorial de sus productos con VCR
+participacion_secciones <- base_unida %>%
+  filter(tiene_vcr == 1, !is.na(seccion)) %>%
+  count(provincia, seccion, name = "n") %>%
   group_by(provincia) %>%
-  summarise(
-    productos_vcr_total = n(),
-    productos_clave = sum(seccion %in% c("Maquinaria", "Químicos", "Quimicos"), na.rm = TRUE),
-    peso_clave = productos_clave / productos_vcr_total,
-    .groups = "drop"
+  mutate(prop = n / sum(n)) %>%
+  ungroup() %>%
+  select(provincia, seccion, prop) %>%
+  pivot_wider(
+    names_from = seccion,
+    values_from = prop,
+    values_fill = 0
   )
 
-# Definimos los grupos para el etiquetado dinámico
-lideres_industriales <- c("Buenos Aires", "CABA", "Córdoba", "Santa Fe", "San Luis")
-provincias_silenciadas <- c("Entre Ríos", "Río Negro", "Tierra del Fuego", "Santa Cruz")
+matriz_cluster <- participacion_secciones %>%
+  select(-provincia)
 
-# Calculamos los 3 puntos grises más altos (excluyendo líderes y silenciados)
-top3_grises <- metricas_vcr %>%
-  filter(!provincia %in% c(lideres_industriales, provincias_silenciadas)) %>%
-  slice_max(order_by = peso_clave, n = 3, with_ties = FALSE) %>%
-  pull(provincia)
+matriz_cluster <- matriz_cluster[
+  , sapply(matriz_cluster, sd) > 0,
+  drop = FALSE
+]
 
+set.seed(21)
+
+km4 <- kmeans(
+  scale(matriz_cluster),
+  centers = 4,
+  nstart = 50
+)
+
+clusters_provincia <- participacion_secciones %>%
+  transmute(
+    provincia,
+    cluster_nombre = paste0("Cluster ", km4$cluster)
+  )
+
+
+# Definir el destaque visual a partir de los propios datos
 datos_grafico_comunicativo <- datos_provinciales %>%
   left_join(metricas_vcr, by = "provincia") %>%
   mutate(
     peso_clave = replace_na(peso_clave, 0),
-    es_lider = ifelse(provincia %in% lideres_industriales, "Líder Industrial", "Resto"),
-    # Asignamos etiqueta solo a los líderes o a los 3 mejores grises
-    etiqueta = ifelse(provincia %in% lideres_industriales | provincia %in% top3_grises, provincia, "")
+    
+    es_lider = if_else(
+      peso_clave >= 0.15,
+      "Alta presencia de sectores clave",
+      "Resto"
+    ),
+    
+    etiqueta = if_else(
+      es_lider == "Alta presencia de sectores clave" |
+        provincia == "CABA",
+      provincia,
+      ""
+    )
   )
 
-# ------------------------------------------------------------------------------
-# 3. CÁLCULO DINÁMICO DE PENDIENTE (MCO) Y SIGNIFICATIVIDAD
-# ------------------------------------------------------------------------------
-mod_comunicativo <- summary(lm(complejidad_prov ~ peso_clave, data = datos_grafico_comunicativo))
-beta_com <- mod_comunicativo$coefficients[2,1]
-pval_com <- mod_comunicativo$coefficients[2,4]
 
-beta_txt <- format(round(beta_com, 5), scientific = FALSE)
-sig_txt <- ifelse(pval_com < 0.05, "***", "")
+# ------------------------------------------------------------------------------
+# 3. CORRELACION Y SIGNIFICATIVIDAD
+# ------------------------------------------------------------------------------
+
+cor_comunicativo <- cor.test(
+  datos_grafico_comunicativo$peso_clave,
+  datos_grafico_comunicativo$complejidad_prov,
+  method = "pearson"
+)
+
+r_com <- unname(cor_comunicativo$estimate)
+pval_com <- cor_comunicativo$p.value
 
 texto_caption <- paste0(
-  "Fuente: Elaboración propia. La línea continua marca la tendencia MCO general.\n",
-  "Efecto marginal: β = ", beta_txt, sig_txt, " (*** p-valor < 0.05)."
+  "Fuente: Complejidad Económica Provincial, Ministerio de Economía de la Nación (2021).\n",
+  "Correlación de Pearson: r = ", round(r_com, 3),
+  "; p = ", format.pval(pval_com, digits = 3, eps = 0.001), "."
 )
+
 
 # ------------------------------------------------------------------------------
 # 4. CONSTRUCCIÓN DEL GRÁFICO COMUNICATIVO
@@ -915,16 +935,23 @@ grafico_comunicativo <- ggplot(
     max.overlaps = 50
   ) +
   
-  scale_color_manual(values = c("Líder Industrial" = "#ed1c24", "Resto" = "grey70")) +
-  scale_size_manual(values = c("Líder Industrial" = 5, "Resto" = 2.5)) +
+  scale_color_manual(values = c(
+    "Alta presencia de sectores clave" = "#ed1c24",
+    "Resto" = "grey70"
+  )) +
+  
+  scale_size_manual(values = c(
+    "Alta presencia de sectores clave" = 5,
+    "Resto" = 2.5
+  )) +
   
   scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
   coord_cartesian(ylim = c(NA, 0.25)) +
   
   labs(
-    title = "La especialización en bienes de capital y químicos tracciona la complejidad",
-    subtitle = "Proporción de sectores industriales clave sobre el total de la canasta exportadora provincial (VCR > 1).",
-    x = "Participación de Maquinaria y Químicos en el VCR",
+    title = "Mayor peso de Maquinaria y Químicos se asocia con mayor complejidad provincial",
+    subtitle = "Participación de estos sectores sobre el total de productos con VCR por provincia, 2021.",
+    x = "Productos con VCR en Maquinaria y Químicos (% del total provincial)",
     y = "Índice de Complejidad Provincial",
     caption = texto_caption
   ) +
