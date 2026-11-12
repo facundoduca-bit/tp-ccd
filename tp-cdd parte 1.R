@@ -636,15 +636,8 @@ datos_provinciales <- base_unida %>%
       str_detect(prov_clean, "fuego") ~ 15800,
       str_detect(prov_clean, "tucum") ~ 5600,
       TRUE ~ NA_real_
-    ),
-    
-    cluster_nombre = case_when(
-      str_detect(prov_clean, "ciudad|caba|capital|buenos aires|c.rdoba|san luis|santa f") ~ "Perfil Industrial / Diversificado",
-      str_detect(prov_clean, "chubut|neuqu|cruz|fuego") ~ "Perfil Extractivo / Energético",
-      str_detect(prov_clean, "chaco|corrientes|entre|formosa|pampa|misiones|santiago") ~ "Perfil Agro / Primario Puro",
-      str_detect(prov_clean, "mendoza|negro|tucum|salta|san juan|rioja|catamarca|jujuy") ~ "Perfil Intermedio (Agro-Extractivo)",
-      TRUE ~ "Sin Asignar"
     )
+
   ) %>%
   select(-prov_clean)
 
@@ -660,6 +653,44 @@ metricas_vcr <- base_unida %>%
     peso_clave = productos_clave / productos_vcr_total,
     .groups = "drop"
   )
+# Cluster real segun la composicion sectorial de los productos con VCR
+participacion_secciones <- base_unida %>%
+  filter(tiene_vcr == 1, !is.na(seccion)) %>%
+  count(provincia, seccion, name = "n") %>%
+  group_by(provincia) %>%
+  mutate(prop = n / sum(n)) %>%
+  ungroup() %>%
+  select(provincia, seccion, prop) %>%
+  pivot_wider(
+    names_from = seccion,
+    values_from = prop,
+    values_fill = 0
+  )
+
+matriz_cluster <- participacion_secciones %>%
+  select(-provincia)
+
+matriz_cluster <- matriz_cluster[
+  , sapply(matriz_cluster, sd) > 0,
+  drop = FALSE
+]
+
+set.seed(21)
+
+km4 <- kmeans(
+  scale(matriz_cluster),
+  centers = 4,
+  nstart = 50
+)
+
+clusters_provincia <- participacion_secciones %>%
+  transmute(
+    provincia,
+    cluster_nombre = paste0("Cluster ", km4$cluster)
+  )
+
+table(clusters_provincia$cluster_nombre)
+
 
 sector_lider_provincia <- base_unida %>%
   filter(tiene_vcr == 1, !is.na(seccion)) %>%
@@ -672,15 +703,17 @@ sector_lider_provincia <- base_unida %>%
 datos_grafico <- datos_provinciales %>%
   left_join(metricas_vcr, by = "provincia") %>%
   left_join(sector_lider_provincia, by = "provincia") %>%
+  left_join(clusters_provincia, by = "provincia") %>%
   mutate(
+    cluster_nombre = replace_na(cluster_nombre, "Sin productos con VCR"),
     peso_clave = replace_na(peso_clave, 0),
     sector_principal = replace_na(as.character(sector_principal), "Sin VCR destacado"),
     rango_tamaño = case_when(
       peso_clave < 0.05 ~ "Baja (< 5%)",
       peso_clave >= 0.05 & peso_clave < 0.15 ~ "Media (5% - 15%)",
-      peso_clave >= 0.15 ~ "Alta (> 15%)"
+      peso_clave >= 0.15 ~ "Alta (>= 15%)"
     ),
-    rango_tamaño = factor(rango_tamaño, levels = c("Baja (< 5%)", "Media (5% - 15%)", "Alta (> 15%)"))
+    rango_tamaño = factor(rango_tamaño, levels = c("Baja (< 5%)", "Media (5% - 15%)", "Alta (>= 15%)"))
   )
 
 # ------------------------------------------------------------------------------
@@ -697,14 +730,18 @@ testear_regresion <- function(data_subset) {
 }
 
 sig_gen  <- testear_regresion(datos_grafico)
-sig_alta <- testear_regresion(datos_grafico %>% filter(rango_tamaño == "Alta (> 15%)"))
+sig_alta <- testear_regresion(datos_grafico %>% filter(rango_tamaño == "Alta (>= 15%)"))
 
 texto_caption <- paste0(
-  "Fuente: Elaboración propia en base a Ministerio de Economía y datos provinciales.\n",
-  "Líneas de tendencia (MCO): La trayectoria estructural de la muestra general (línea negra) ", ifelse(sig_gen, "es significativa (***)", "no resulta significativa"), ",\n",
-  "mientras que la línea roja, que aísla a las provincias con alta cuota de sectores clave (Maquinaria y Químicos), ", ifelse(sig_alta, "sí posee una asociación positiva significativa (***)", "no es significativa"), ".\n",
-  "(***) p-valor < 0.05."
+  "Fuente: Complejidad Económica Provincial, Ministerio de Economía de la Nación (2021); ",
+  "PIB per cápita: FUENTE_PIB.\n",
+  "Línea negra: relación lineal para las 24 jurisdicciones (",
+  ifelse(sig_gen, "p < 0,05", "p >= 0,05"),
+  "). Línea roja: jurisdicciones con al menos 15% de Maquinaria y Químicos (",
+  ifelse(sig_alta, "p < 0,05", "p >= 0,05"),
+  ")."
 )
+
 
 # ------------------------------------------------------------------------------
 # 4. CONSTRUCCIÓN DEL GRÁFICO EXPLORATORIO CORREGIDO
@@ -717,7 +754,7 @@ grafico_exploratorio <- ggplot(
               method = "lm", se = FALSE, color = "black", linetype = "solid", linewidth = 0.7, 
               fullrange = TRUE) +
   
-  geom_smooth(data = subset(datos_grafico, rango_tamaño == "Alta (> 15%)"), 
+  geom_smooth(data = subset(datos_grafico, rango_tamaño == "Alta (>= 15%)"), 
               inherit.aes = FALSE, aes(x = pib_pc, y = complejidad_prov), 
               method = "lm", se = FALSE, color = "#FF0000", linetype = "solid", linewidth = 1,
               fullrange = TRUE) +
@@ -727,13 +764,14 @@ grafico_exploratorio <- ggplot(
   geom_text_repel(aes(label = provincia), size = 3.2, max.overlaps = 50, box.padding = 0.5, 
                   point.padding = 0.3, segment.color = "grey50", segment.size = 0.3) +
   
-  scale_size_manual(values = c("Baja (< 5%)" = 3.5, "Media (5% - 15%)" = 6, "Alta (> 15%)" = 9)) +
+  scale_size_manual(values = c("Baja (< 5%)" = 3.5, "Media (5% - 15%)" = 6, "Alta (>= 15%)" = 9)) +
   scale_shape_manual(values = c(15, 16, 17, 18, 3, 4, 8, 25, 9, 10, 11, 12)) + 
   scale_color_manual(values = c(
-    "Perfil Industrial / Diversificado"   = "#ed1c24", # Rojo
-    "Perfil Agro / Primario Puro"         = "#00a651", # Verde
-    "Perfil Intermedio (Agro-Extractivo)" = "#ff7f00", # Naranja
-    "Perfil Extractivo / Energético"      = "#0054a6"  # Azul
+    "Cluster 1" = "#0072B2",
+    "Cluster 2" = "#E69F00",
+    "Cluster 3" = "#009E73",
+    "Cluster 4" = "#CC79A7"
+    "Sin productos con VCR" = "grey60"
   )) +
   scale_x_continuous(labels = label_dollar(prefix = "USD ", big.mark = ".")) +
   
@@ -741,13 +779,13 @@ grafico_exploratorio <- ggplot(
   coord_cartesian(ylim = c(NA, 0.25)) +
   
   labs(
-    title = "El Motor de la Complejidad: Desarrollo Industrial vs Riqueza Extractiva.",
-    subtitle = "Análisis de clúster provincial (K=4) de canastas exportadoras similares y su asociación transversal con el PIB per cápita.",
+    title = "Complejidad provincial, estructura exportadora y PIB per cápita",
+    subtitle = "Color: cluster de canasta VCR | Tamaño: peso de Maquinaria y Químicos | Forma: sector líder",
     x = "PIB per cápita (USD)",
     y = "Índice de Complejidad Provincial",
-    color = "Clúster Productivo",
-    shape = "Sector Líder",
-    size = "Cuota de sectores clave",
+    color = "Cluster de canasta VCR",
+    shape = "Sector líder",
+    size = "Peso de Maquinaria + Químicos",
     caption = texto_caption
   ) +
   
@@ -834,41 +872,6 @@ datos_provinciales <- base_unida %>%
 # ------------------------------------------------------------------------------
 # 2. CÁLCULO DE LA VARIABLE CLAVE Y ETIQUETADO INTELIGENTE
 # ------------------------------------------------------------------------------
-# Cluster de provincias segun la composicion sectorial de sus productos con VCR
-participacion_secciones <- base_unida %>%
-  filter(tiene_vcr == 1, !is.na(seccion)) %>%
-  count(provincia, seccion, name = "n") %>%
-  group_by(provincia) %>%
-  mutate(prop = n / sum(n)) %>%
-  ungroup() %>%
-  select(provincia, seccion, prop) %>%
-  pivot_wider(
-    names_from = seccion,
-    values_from = prop,
-    values_fill = 0
-  )
-
-matriz_cluster <- participacion_secciones %>%
-  select(-provincia)
-
-matriz_cluster <- matriz_cluster[
-  , sapply(matriz_cluster, sd) > 0,
-  drop = FALSE
-]
-
-set.seed(21)
-
-km4 <- kmeans(
-  scale(matriz_cluster),
-  centers = 4,
-  nstart = 50
-)
-
-clusters_provincia <- participacion_secciones %>%
-  transmute(
-    provincia,
-    cluster_nombre = paste0("Cluster ", km4$cluster)
-  )
 
 
 # Definir el destaque visual a partir de los propios datos
@@ -950,7 +953,7 @@ grafico_comunicativo <- ggplot(
   
   labs(
     title = "Mayor peso de Maquinaria y Químicos se asocia con mayor complejidad provincial",
-    subtitle = "Participación de estos sectores sobre el total de productos con VCR por provincia, 2021.",
+    subtitle = "En rojo: provincias con al menos 15% de sus productos con VCR en Maquinaria y Químicos. Datos 2021.",
     x = "Productos con VCR en Maquinaria y Químicos (% del total provincial)",
     y = "Índice de Complejidad Provincial",
     caption = texto_caption
