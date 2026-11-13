@@ -734,7 +734,6 @@ sig_alta <- testear_regresion(datos_grafico %>% filter(rango_tamaño == "Alta (>
 
 texto_caption <- paste0(
   "Fuente: Complejidad Económica Provincial, Ministerio de Economía de la Nación (2021); ",
-  "PIB per cápita: FUENTE_PIB.\n",
   "Línea negra: relación lineal para las 24 jurisdicciones (",
   ifelse(sig_gen, "p < 0,05", "p >= 0,05"),
   "). Línea roja: jurisdicciones con al menos 15% de Maquinaria y Químicos (",
@@ -952,7 +951,7 @@ grafico_comunicativo <- ggplot(
   coord_cartesian(ylim = c(NA, 0.25)) +
   
   labs(
-    title = "Mayor peso de Maquinaria y Químicos se asocia con mayor complejidad provincial",
+    title = "Sectores asociados a mayor complejidad provincial",
     subtitle = "En rojo: provincias con al menos 15% de sus productos con VCR en Maquinaria y Químicos. Datos 2021.",
     x = "Productos con VCR en Maquinaria y Químicos (% del total provincial)",
     y = "Índice de Complejidad Provincial",
