@@ -1,4 +1,6 @@
 library(tidyverse)
+library(sandwich)
+library(lmtest)
 # install.packages("rstatix")
 
 #1. leer archivos CSV
@@ -21,9 +23,9 @@ base_unida <- read_csv("base_da_1 (1).csv", show_col_types = FALSE) %>%
       tiene_vcr == 1 ~ "Exporta con VCR",
       tiene_vcr == 0 ~ "Exporta sin VCR",
       is.na(tiene_vcr) ~ "No exporta"
-    ),
-    tiene_vcr = replace_na(tiene_vcr, 0)
+    )
   ) %>%
+  
   mutate(
     provincia = as.factor(provincia),
     seccion = as.factor(seccion),
@@ -32,6 +34,86 @@ base_unida <- read_csv("base_da_1 (1).csv", show_col_types = FALSE) %>%
 
 # chequeo final
 table(base_unida$estado_productivo, useNA = "always")
+
+# DIAGNOSTICO DE COMPLEJIDAD PROVINCIAL
+
+diagnostico_icp <- base_da_2 %>%
+  group_by(cod_provincia, provincia) %>%
+  summarise(
+    registros_exportados = n(),
+    productos_con_vcr = sum(tiene_vcr == 1, na.rm = TRUE),
+    productos_sin_vcr = sum(tiene_vcr == 0, na.rm = TRUE),
+    icp_base = first(complejidad_provincia),
+    n_icp_distintos = n_distinct(complejidad_provincia),
+    icp_recalculado = if (sum(tiene_vcr == 1, na.rm = TRUE) > 0) {
+      mean(complejidad_producto[tiene_vcr == 1], na.rm = TRUE)
+    } else {
+      NA_real_
+    },
+    .groups = "drop"
+  ) %>%
+  mutate(
+    diferencia = icp_base - icp_recalculado
+  ) %>%
+  arrange(productos_con_vcr, provincia)
+
+print(diagnostico_icp, n = 24)
+
+# PROVINCIAS SIN PRODUCTOS CON VCR
+
+diagnostico_icp %>%
+  filter(productos_con_vcr == 0)
+
+# DIFERENCIA MAXIMA ENTRE EL ICP OFICIAL Y EL RECALCULADO
+
+diagnostico_icp %>%
+  filter(productos_con_vcr > 0) %>%
+  summarise(
+    diferencia_maxima = max(abs(diferencia), na.rm = TRUE)
+  )
+
+# CONTROL DE ESTADOS PRODUCTIVOS
+
+base_unida %>%
+  count(estado_productivo, .drop = FALSE)
+
+# AUDITORIA DE PROVINCIAS SIN PRODUCTOS CON VCR
+
+auditoria_sin_vcr <- base_da_2 %>%
+  group_by(cod_provincia, provincia) %>%
+  summarise(
+    registros_exportados = n(),
+    productos_distintos = n_distinct(cod_ncm_6d),
+    productos_con_vcr = sum(tiene_vcr == 1, na.rm = TRUE),
+    productos_sin_vcr = sum(tiene_vcr == 0, na.rm = TRUE),
+    vcr_faltantes = sum(is.na(tiene_vcr)),
+    icp_base = first(complejidad_provincia),
+    n_icp_distintos = n_distinct(complejidad_provincia),
+    .groups = "drop"
+  ) %>%
+  filter(productos_con_vcr == 0)
+
+print(auditoria_sin_vcr, n = 24, width = Inf)
+
+# INSPECCIONAR OBSERVACIONES ORIGINALES
+
+muestra_sin_vcr <- base_da_2 %>%
+  semi_join(auditoria_sin_vcr, by = c("cod_provincia", "provincia")) %>%
+  select(
+    cod_provincia,
+    provincia,
+    cod_ncm_6d,
+    ncm_6d,
+    seccion,
+    tiene_vcr,
+    complejidad_producto,
+    complejidad_provincia
+  ) %>%
+  group_by(provincia) %>%
+  slice_head(n = 5) %>%
+  ungroup()
+
+print(muestra_sin_vcr, n = 15, width = Inf)
 
 # Chequear dimensiones
 dim(base_da_1)
@@ -193,7 +275,7 @@ plot_proporcion_seccion <- ggplot(base_unida %>% filter(tiene_vcr == 1),
   theme_minimal() +
   theme(legend.position = "bottom", legend.text = element_text(size = 8)) +
   labs(
-    tittle = "Cantidad VCR por provincia divididos por seccion",
+    title = "Composición sectorial de las exportaciones con VCR por provincia",
     x = "provincia",
     y = "Proporción sobre el total del VCR provincial",
     fill = "Sección"
@@ -522,6 +604,201 @@ resultados_correlacion <- correlacion_individual %>%
 
 print(resultados_correlacion)
 
+
+# SENSIBILIDAD: CORRELACIONES CON LAS 24 JURISDICCIONES
+
+base_prov_24 <- base_da_2 %>%
+  mutate(provincia = as.character(provincia)) %>%
+  group_by(provincia) %>%
+  summarise(
+    total_exportados = n(),
+    complejidad_prov = first(complejidad_provincia),
+    .groups = "drop"
+  )
+
+conteo_vcr_24 <- base_da_2 %>%
+  filter(tiene_vcr == 1, !is.na(seccion)) %>%
+  mutate(
+    provincia = as.character(provincia),
+    seccion = as.character(seccion)
+  ) %>%
+  count(provincia, seccion, name = "productos_vcr_sector")
+
+correlacion_24 <- tidyr::expand_grid(
+  provincia = base_prov_24$provincia,
+  seccion = sort(unique(as.character(base_da_2$seccion)))
+) %>%
+  left_join(conteo_vcr_24, by = c("provincia", "seccion")) %>%
+  left_join(base_prov_24, by = "provincia") %>%
+  mutate(
+    productos_vcr_sector = replace_na(productos_vcr_sector, 0L),
+    peso_sector_sobre_exportaciones =
+      productos_vcr_sector / total_exportados
+  )
+
+resultados_correlacion_24 <- correlacion_24 %>%
+  filter(seccion != "Otros") %>%
+  group_by(seccion) %>%
+  summarise(
+    n = n(),
+    correlacion = cor(
+      peso_sector_sobre_exportaciones,
+      complejidad_prov
+    ),
+    p_value = cor.test(
+      peso_sector_sobre_exportaciones,
+      complejidad_prov
+    )$p.value,
+    .groups = "drop"
+  ) %>%
+  arrange(desc(correlacion))
+
+print(resultados_correlacion_24, n = Inf)
+
+participacion_clave_24 <- base_da_2 %>%
+  group_by(provincia) %>%
+  summarise(
+    total_exportados = n(),
+    productos_clave = sum(
+      tiene_vcr == 1 &
+        seccion %in% c("Maquinaria", "Químicos", "Quimicos"),
+      na.rm = TRUE
+    ),
+    complejidad_prov = first(complejidad_provincia),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    peso_clave_sobre_exportaciones =
+      productos_clave / total_exportados
+  )
+
+cor_clave_24 <- cor.test(
+  participacion_clave_24$peso_clave_sobre_exportaciones,
+  participacion_clave_24$complejidad_prov,
+  method = "pearson"
+)
+
+print(participacion_clave_24, n = 24)
+print(cor_clave_24)
+
+
+# DESCOMPOSICION SHIFT-SHARE DE LA COMPLEJIDAD PROVINCIAL
+
+base_vcr_prov <- base_da_2 %>%
+  filter(
+    tiene_vcr == 1,
+    !is.na(complejidad_producto),
+    !is.na(seccion)
+  ) %>%
+  distinct(
+    cod_provincia,
+    provincia,
+    cod_ncm_6d,
+    seccion,
+    complejidad_producto
+  )
+
+provincias_vcr <- base_vcr_prov %>%
+  distinct(cod_provincia, provincia)
+
+secciones_vcr <- base_vcr_prov %>%
+  distinct(seccion)
+
+total_vcr_prov <- base_vcr_prov %>%
+  count(cod_provincia, provincia, name = "total_vcr_provincia")
+
+composicion_observada <- base_vcr_prov %>%
+  group_by(cod_provincia, provincia, seccion) %>%
+  summarise(
+    n_productos = n(),
+    complejidad_media_prov = mean(complejidad_producto),
+    .groups = "drop"
+  )
+
+composicion_prov <- tidyr::expand_grid(
+  provincias_vcr,
+  secciones_vcr
+) %>%
+  left_join(
+    composicion_observada,
+    by = c("cod_provincia", "provincia", "seccion")
+  ) %>%
+  left_join(
+    total_vcr_prov,
+    by = c("cod_provincia", "provincia")
+  ) %>%
+  mutate(
+    n_productos = replace_na(n_productos, 0L),
+    peso_prov = n_productos / total_vcr_provincia
+  )
+
+referencia_nacional <- base_vcr_prov %>%
+  group_by(seccion) %>%
+  summarise(
+    n_productos_nacional = n(),
+    complejidad_nacional = mean(complejidad_producto),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    peso_nacional = n_productos_nacional / sum(n_productos_nacional)
+  )
+
+shift_share_detalle <- composicion_prov %>%
+  left_join(referencia_nacional, by = "seccion") %>%
+  mutate(
+    efecto_composicion =
+      (peso_prov - peso_nacional) * complejidad_nacional,
+    
+    efecto_intrasectorial = if_else(
+      peso_prov > 0,
+      peso_prov * (complejidad_media_prov - complejidad_nacional),
+      0
+    )
+  )
+
+icp_oficial_prov <- base_da_2 %>%
+  group_by(cod_provincia, provincia) %>%
+  summarise(
+    icp_oficial = first(complejidad_provincia),
+    n_icp_distintos = n_distinct(complejidad_provincia),
+    .groups = "drop"
+  )
+shift_share_con_vcr <- shift_share_detalle %>%
+  group_by(cod_provincia, provincia) %>%
+  summarise(
+    icp_provincial = sum(
+      peso_prov * coalesce(complejidad_media_prov, 0)
+    ),
+    icp_referencia = sum(peso_nacional * complejidad_nacional),
+    efecto_composicion = sum(efecto_composicion),
+    efecto_intrasectorial = sum(efecto_intrasectorial),
+    diferencia_icp = icp_provincial - icp_referencia,
+    diferencia_descompuesta = efecto_composicion + efecto_intrasectorial,
+    error_cierre = diferencia_icp - diferencia_descompuesta,
+    .groups = "drop"
+  )
+
+shift_share_provincia <- icp_oficial_prov %>%
+  left_join(
+    shift_share_con_vcr,
+    by = c("cod_provincia", "provincia")
+  ) %>%
+  mutate(
+    diferencia_recalculo = icp_provincial - icp_oficial
+  ) %>%
+  arrange(desc(icp_provincial))
+
+print(shift_share_provincia, n = 24, width = Inf)
+
+shift_share_provincia %>%
+  summarise(
+    provincias_totales = n(),
+    provincias_con_vcr = sum(!is.na(icp_provincial)),
+    provincias_sin_vcr = sum(is.na(icp_provincial)),
+    error_maximo_cierre = max(abs(error_cierre), na.rm = TRUE),
+    diferencia_maxima_icp = max(abs(diferencia_recalculo), na.rm = TRUE)
+  )
+
 # 5. Generar un gráfico de dispersión facetado (un panel por sector)
 plot_correlacion_indiv <- ggplot(correlacion_individual, 
                                  aes(x = peso_sector, y = complejidad_prov)) +
@@ -610,31 +887,31 @@ datos_provinciales <- base_unida %>%
   mutate(
     prov_clean = str_to_lower(as.character(provincia)),
     
-    pib_pc = case_when(
-      str_detect(prov_clean, "ciudad|caba|capital") ~ 22000,
-      str_detect(prov_clean, "buenos aires") ~ 8500, 
-      str_detect(prov_clean, "catamarca") ~ 9200,
-      str_detect(prov_clean, "chaco") ~ 4100,
-      str_detect(prov_clean, "chubut") ~ 14500,
-      str_detect(prov_clean, "c.rdoba") ~ 9800,
-      str_detect(prov_clean, "corrientes") ~ 4800,
-      str_detect(prov_clean, "entre") ~ 6200,
-      str_detect(prov_clean, "formosa") ~ 3500,
-      str_detect(prov_clean, "jujuy") ~ 5100,
-      str_detect(prov_clean, "pampa") ~ 8100,
-      str_detect(prov_clean, "rioja") ~ 4900,
-      str_detect(prov_clean, "mendoza") ~ 7900,
-      str_detect(prov_clean, "misiones") ~ 5300,
-      str_detect(prov_clean, "neuqu") ~ 18500,
-      str_detect(prov_clean, "negro") ~ 9100,
-      str_detect(prov_clean, "salta") ~ 5400,
-      str_detect(prov_clean, "san juan") ~ 6800,
-      str_detect(prov_clean, "san luis") ~ 8900,
-      str_detect(prov_clean, "cruz") ~ 16200,
-      str_detect(prov_clean, "santa f") ~ 10500,
-      str_detect(prov_clean, "santiago") ~ 3900,
-      str_detect(prov_clean, "fuego") ~ 15800,
-      str_detect(prov_clean, "tucum") ~ 5600,
+    vab_pc_index = case_when(
+      str_detect(prov_clean, "ciudad|caba|capital") ~ 307,
+      str_detect(prov_clean, "buenos aires") ~ 77,
+      str_detect(prov_clean, "catamarca") ~ 45,
+      str_detect(prov_clean, "chaco") ~ 42,
+      str_detect(prov_clean, "chubut") ~ 134,
+      str_detect(prov_clean, "c.rdoba") ~ 102,
+      str_detect(prov_clean, "corrientes") ~ 48,
+      str_detect(prov_clean, "entre") ~ 81,
+      str_detect(prov_clean, "formosa") ~ 31,
+      str_detect(prov_clean, "jujuy") ~ 41,
+      str_detect(prov_clean, "pampa") ~ 115,
+      str_detect(prov_clean, "rioja") ~ 42,
+      str_detect(prov_clean, "mendoza") ~ 92,
+      str_detect(prov_clean, "misiones") ~ 66,
+      str_detect(prov_clean, "neuqu") ~ 244,
+      str_detect(prov_clean, "negro") ~ 116,
+      str_detect(prov_clean, "salta") ~ 54,
+      str_detect(prov_clean, "san juan") ~ 66,
+      str_detect(prov_clean, "san luis") ~ 64,
+      str_detect(prov_clean, "cruz") ~ 267,
+      str_detect(prov_clean, "santa f") ~ 122,
+      str_detect(prov_clean, "santiago") ~ 41,
+      str_detect(prov_clean, "fuego") ~ 150,
+      str_detect(prov_clean, "tucum") ~ 51,
       TRUE ~ NA_real_
     )
 
@@ -675,6 +952,71 @@ matriz_cluster <- matriz_cluster[
   drop = FALSE
 ]
 
+# EVALUACION DE LA CANTIDAD DE CLUSTERS
+
+matriz_cluster_est <- scale(matriz_cluster)
+
+set.seed(21)
+
+# METODO DEL CODO
+
+wss_cluster <- sapply(1:8, function(k) {
+  kmeans(
+    matriz_cluster_est,
+    centers = k,
+    nstart = 25
+  )$tot.withinss
+})
+
+plot(
+  1:8,
+  wss_cluster,
+  type = "b",
+  xlab = "Cantidad de clusters",
+  ylab = "Suma de cuadrados intra-cluster",
+  main = "Método del codo"
+)
+
+# METODO DE SILUETA
+
+silhouette_promedio <- sapply(2:8, function(k) {
+  km_aux <- kmeans(
+    matriz_cluster_est,
+    centers = k,
+    nstart = 25
+  )
+  
+  mean(
+    cluster::silhouette(
+      km_aux$cluster,
+      dist(matriz_cluster_est)
+    )[, 3]
+  )
+})
+
+plot(
+  2:8,
+  silhouette_promedio,
+  type = "b",
+  xlab = "Cantidad de clusters",
+  ylab = "Silueta promedio",
+  main = "Método de silueta"
+)
+
+# GAP STATISTIC
+
+gap_cluster <- cluster::clusGap(
+  matriz_cluster_est,
+  FUN = kmeans,
+  K.max = 8,
+  B = 100,
+  nstart = 25
+)
+
+print(gap_cluster)
+
+plot(gap_cluster, main = "Estadístico Gap para seleccionar la cantidad de clusters", xlab = "Cantidad de clusters (k)", ylab = "Estadístico Gap")
+
 set.seed(21)
 
 km4 <- kmeans(
@@ -691,6 +1033,38 @@ clusters_provincia <- participacion_secciones %>%
 
 table(clusters_provincia$cluster_nombre)
 
+perfil_clusters <- participacion_secciones %>%
+  left_join(clusters_provincia, by = "provincia") %>%
+  pivot_longer(
+    cols = -c(provincia, cluster_nombre),
+    names_to = "seccion",
+    values_to = "participacion"
+  ) %>%
+  group_by(cluster_nombre, seccion) %>%
+  summarise(
+    participacion_promedio = mean(participacion),
+    .groups = "drop"
+  )
+
+print(perfil_clusters, n = Inf)
+
+provincias_por_cluster <- clusters_provincia %>%
+  arrange(cluster_nombre, provincia) %>%
+  group_by(cluster_nombre) %>%
+  summarise(
+    cantidad_provincias = n(),
+    provincias = paste(provincia, collapse = ", "),
+    .groups = "drop"
+  )
+
+print(provincias_por_cluster, n = Inf)
+
+sil_k4 <- cluster::silhouette(
+  km4$cluster,
+  dist(matriz_cluster_est)
+)
+
+mean(sil_k4[, 3])
 
 sector_lider_provincia <- base_unida %>%
   filter(tiene_vcr == 1, !is.na(seccion)) %>%
@@ -706,22 +1080,75 @@ datos_grafico <- datos_provinciales %>%
   left_join(clusters_provincia, by = "provincia") %>%
   mutate(
     cluster_nombre = replace_na(cluster_nombre, "Sin productos con VCR"),
-    peso_clave = replace_na(peso_clave, 0),
     sector_principal = replace_na(as.character(sector_principal), "Sin VCR destacado"),
     rango_tamaño = case_when(
+      is.na(productos_vcr_total) ~ "Sin canasta VCR",
       peso_clave < 0.05 ~ "Baja (< 5%)",
-      peso_clave >= 0.05 & peso_clave < 0.15 ~ "Media (5% - 15%)",
-      peso_clave >= 0.15 ~ "Alta (>= 15%)"
+      peso_clave < 0.15 ~ "Media (5% - 15%)",
+      TRUE ~ "Alta (>= 15%)"
     ),
-    rango_tamaño = factor(rango_tamaño, levels = c("Baja (< 5%)", "Media (5% - 15%)", "Alta (>= 15%)"))
+    rango_tamaño = factor(
+      rango_tamaño,
+      levels = c(
+        "Sin canasta VCR",
+        "Baja (< 5%)",
+        "Media (5% - 15%)",
+        "Alta (>= 15%)"
+      )
+    )
   )
+modelo_vab <- lm(
+  complejidad_prov ~ vab_pc_index,
+  data = datos_grafico
+)
+
+summary(modelo_vab)
+
+confint(modelo_vab)
+
+nobs(modelo_vab)
+
+
+# ERRORES ESTANDAR ROBUSTOS HC3
+
+modelo_vab_hc3 <- lmtest::coeftest(
+  modelo_vab,
+  vcov. = sandwich::vcovHC(modelo_vab, type = "HC3")
+)
+
+print(modelo_vab_hc3)
+
+# SENSIBILIDAD: MODELO CON PROVINCIAS QUE TIENEN REGISTROS VCR
+
+modelo_vab_21 <- lm(
+  complejidad_prov ~ vab_pc_index,
+  data = datos_grafico %>%
+    filter(!is.na(productos_vcr_total))
+)
+
+summary(modelo_vab_21)
+
+# OBSERVACIONES INFLUYENTES
+
+diagnosticos_vab <- tibble(
+  provincia = datos_grafico$provincia,
+  distancia_cook = cooks.distance(modelo_vab)
+) %>%
+  arrange(desc(distancia_cook))
+
+print(diagnosticos_vab, n = 24)
+
+# GRAFICOS DE DIAGNOSTICO DEL MODELO
+
+plot(modelo_vab, which = 1:4)
+
 
 # ------------------------------------------------------------------------------
 # 3. TESTEO DINÁMICO DE SIGNIFICATIVIDAD (p < 0.05 = ***)
 # ------------------------------------------------------------------------------
 testear_regresion <- function(data_subset) {
   if(nrow(data_subset) > 2) { 
-    mod <- summary(lm(complejidad_prov ~ pib_pc, data = data_subset))
+    mod <- summary(lm(complejidad_prov ~ vab_pc_index, data = data_subset))
     p_val <- mod$coefficients[2,4]
     return(p_val < 0.05)
   } else {
@@ -734,6 +1161,8 @@ sig_alta <- testear_regresion(datos_grafico %>% filter(rango_tamaño == "Alta (>
 
 texto_caption <- paste0(
   "Fuente: Complejidad Económica Provincial, Ministerio de Economía de la Nación (2021); ",
+  "VAB per cápita: elaboración propia en base a MEcon e INDEC (2021), ",
+  "Moskovits (2024), Tabla 2. Índice promedio país = 100.\n",
   "Línea negra: relación lineal para las 24 jurisdicciones (",
   ifelse(sig_gen, "p < 0,05", "p >= 0,05"),
   "). Línea roja: jurisdicciones con al menos 15% de Maquinaria y Químicos (",
@@ -741,20 +1170,19 @@ texto_caption <- paste0(
   ")."
 )
 
-
 # ------------------------------------------------------------------------------
 # 4. CONSTRUCCIÓN DEL GRÁFICO EXPLORATORIO CORREGIDO
 # ------------------------------------------------------------------------------
 grafico_exploratorio <- ggplot(
   datos_grafico, 
-  aes(x = pib_pc, y = complejidad_prov)
+  aes(x = vab_pc_index, y = complejidad_prov)
 ) +
-  geom_smooth(inherit.aes = FALSE, aes(x = pib_pc, y = complejidad_prov), 
+  geom_smooth(inherit.aes = FALSE, aes(x = vab_pc_index, y = complejidad_prov), 
               method = "lm", se = FALSE, color = "black", linetype = "solid", linewidth = 0.7, 
               fullrange = TRUE) +
   
   geom_smooth(data = subset(datos_grafico, rango_tamaño == "Alta (>= 15%)"), 
-              inherit.aes = FALSE, aes(x = pib_pc, y = complejidad_prov), 
+              inherit.aes = FALSE, aes(x = vab_pc_index, y = complejidad_prov), 
               method = "lm", se = FALSE, color = "#FF0000", linetype = "solid", linewidth = 1,
               fullrange = TRUE) +
   
@@ -763,8 +1191,13 @@ grafico_exploratorio <- ggplot(
   geom_text_repel(aes(label = provincia), size = 3.2, max.overlaps = 50, box.padding = 0.5, 
                   point.padding = 0.3, segment.color = "grey50", segment.size = 0.3) +
   
-  scale_size_manual(values = c("Baja (< 5%)" = 3.5, "Media (5% - 15%)" = 6, "Alta (>= 15%)" = 9)) +
-  scale_shape_manual(values = c(15, 16, 17, 18, 3, 4, 8, 25, 9, 10, 11, 12)) + 
+  scale_size_manual(values = c(
+    "Sin canasta VCR" = 3.5,
+    "Baja (< 5%)" = 3.5,
+    "Media (5% - 15%)" = 6,
+    "Alta (>= 15%)" = 9
+  ), guide = "none") +
+  scale_shape_manual(values = c("Agro, Alimentos y Bebidas" = 15, "Sin VCR destacado" = 16, "Textiles" = 17)) + 
   scale_color_manual(values = c(
     "Cluster 1" = "#0072B2",
     "Cluster 2" = "#E69F00",
@@ -772,19 +1205,18 @@ grafico_exploratorio <- ggplot(
     "Cluster 4" = "#CC79A7",
     "Sin productos con VCR" = "grey60"
   )) +
-  scale_x_continuous(labels = label_dollar(prefix = "USD ", big.mark = ".")) +
+  scale_x_continuous(labels = scales::label_number(big.mark = ".", decimal.mark = ",")) +
   
   # APLICACIÓN DEL CORTE DE EJE Y SOLICITADO
   coord_cartesian(ylim = c(NA, 0.25)) +
   
   labs(
-    title = "Complejidad provincial, estructura exportadora y PIB per cápita",
-    subtitle = "Color: cluster de canasta VCR | Tamaño: peso de Maquinaria y Químicos | Forma: sector líder",
-    x = "PIB per cápita (USD)",
+    title = "Complejidad provincial, estructura exportadora y VAB per cápita",
+    subtitle = "Color: cluster de canasta VCR; forma: sector líder; tamaño: participación de Maquinaria y Químicos (baja <5%, media 5–15%, alta >=15%).",
+    x = "Índice de VAB per cápita (promedio país = 100)",
     y = "Índice de Complejidad Provincial",
     color = "Cluster de canasta VCR",
     shape = "Sector líder",
-    size = "Peso de Maquinaria + Químicos",
     caption = texto_caption
   ) +
   
@@ -793,9 +1225,9 @@ grafico_exploratorio <- ggplot(
     plot.title = element_text(face = "bold", size = 13),
     plot.subtitle = element_text(color = "grey30", size = 9.5, margin = margin(b = 10)),
     plot.caption = element_text(hjust = 0, size = 8.5, color = "grey20", lineheight = 1.2, margin = margin(t = 15)),
-    legend.position = "right",
-    legend.box = "vertical",
-    legend.spacing.y = unit(0.2, "cm"),
+    legend.position = "bottom",
+    legend.box = "horizontal",
+    legend.spacing.x = unit(0.3, "cm"),
     legend.title = element_text(face = "bold", size = 8.5),
     legend.text = element_text(size = 8),
     panel.grid.minor = element_blank(),
@@ -836,6 +1268,7 @@ datos_provinciales <- base_unida %>%
   filter(!is.na(complejidad_provincia)) %>%
   rename(complejidad_prov = complejidad_provincia) %>%
   mutate(
+    provincia_original = as.character(provincia),
     prov_clean = str_to_lower(as.character(provincia)),
     provincia_limpia = case_when(
       str_detect(prov_clean, "ciudad|caba|capital") ~ "CABA",
@@ -875,16 +1308,17 @@ datos_provinciales <- base_unida %>%
 
 # Definir el destaque visual a partir de los propios datos
 datos_grafico_comunicativo <- datos_provinciales %>%
-  left_join(metricas_vcr, by = "provincia") %>%
+  left_join(
+    metricas_vcr %>% mutate(provincia = as.character(provincia)),
+    by = c("provincia_original" = "provincia")
+  ) %>%
+  select(-provincia_original) %>%
   mutate(
-    peso_clave = replace_na(peso_clave, 0),
-    
-    es_lider = if_else(
-      peso_clave >= 0.15,
-      "Alta presencia de sectores clave",
-      "Resto"
+    es_lider = case_when(
+      is.na(peso_clave) ~ NA_character_,
+      peso_clave >= 0.15 ~ "Alta presencia de sectores clave",
+      TRUE ~ "Resto"
     ),
-    
     etiqueta = if_else(
       es_lider == "Alta presencia de sectores clave" |
         provincia == "CABA",
@@ -898,9 +1332,15 @@ datos_grafico_comunicativo <- datos_provinciales %>%
 # 3. CORRELACION Y SIGNIFICATIVIDAD
 # ------------------------------------------------------------------------------
 
+datos_cor_comunicativo <- datos_grafico_comunicativo %>%
+  filter(
+    !is.na(peso_clave),
+    !is.na(complejidad_prov)
+  )
+
 cor_comunicativo <- cor.test(
-  datos_grafico_comunicativo$peso_clave,
-  datos_grafico_comunicativo$complejidad_prov,
+  datos_cor_comunicativo$peso_clave,
+  datos_cor_comunicativo$complejidad_prov,
   method = "pearson"
 )
 
@@ -908,9 +1348,10 @@ r_com <- unname(cor_comunicativo$estimate)
 pval_com <- cor_comunicativo$p.value
 
 texto_caption <- paste0(
-  "Fuente: Complejidad Económica Provincial, Ministerio de Economía de la Nación (2021).\n",
-  "Correlación de Pearson: r = ", round(r_com, 3),
-  "; p = ", format.pval(pval_com, digits = 3, eps = 0.001), "."
+  "Fuente: Complejidad Económica Provincial, Ministerio de Economía de la Nación (2021). Elaboración propia.\n",
+  "Se incluyen ", nrow(datos_cor_comunicativo),
+  " provincias con al menos un producto con VCR. Las provincias sin VCR se excluyen porque la proporción sectorial no está definida.\n",
+  "La relación es descriptiva y no permite establecer causalidad."
 )
 
 
@@ -918,7 +1359,7 @@ texto_caption <- paste0(
 # 4. CONSTRUCCIÓN DEL GRÁFICO COMUNICATIVO
 # ------------------------------------------------------------------------------
 grafico_comunicativo <- ggplot(
-  datos_grafico_comunicativo, 
+  datos_cor_comunicativo, 
   aes(x = peso_clave, y = complejidad_prov)
 ) +
   geom_smooth(method = "lm", se = FALSE, color = "black", linetype = "solid", linewidth = 0.8, fullrange = TRUE) +
@@ -951,8 +1392,8 @@ grafico_comunicativo <- ggplot(
   coord_cartesian(ylim = c(NA, 0.25)) +
   
   labs(
-    title = "Sectores asociados a mayor complejidad provincial",
-    subtitle = "En rojo: provincias con al menos 15% de sus productos con VCR en Maquinaria y Químicos. Datos 2021.",
+    title = "Más peso de Maquinaria y Químicos se asocia con mayor complejidad",
+    subtitle = "Relación observada entre la participación de esos sectores en la canasta con VCR y el índice provincial (2021).",
     x = "Productos con VCR en Maquinaria y Químicos (% del total provincial)",
     y = "Índice de Complejidad Provincial",
     caption = texto_caption
@@ -983,3 +1424,4 @@ ggsave(
 )
 
 print(grafico_comunicativo)
+
