@@ -1,6 +1,11 @@
 library(tidyverse)
+library(ggrepel)
 library(sandwich)
 library(lmtest)
+
+dir.create("output/graficos", recursive = TRUE, showWarnings = FALSE)
+dir.create("output/tablas", recursive = TRUE, showWarnings = FALSE)
+
 # install.packages("rstatix")
 
 #1. leer archivos CSV
@@ -136,42 +141,117 @@ base_unida %>%
 tabla_provincias <- base_da_2 %>%
   distinct(provincia, complejidad_provincia)
 
-# 2.Calcular medidas descriptivas de la complejidad provincial
-tabla_provincias %>%
+# 2. MEDIDAS DESCRIPTIVAS DE COMPLEJIDAD PROVINCIAL
+
+resumen_icp <- tabla_provincias %>%
   summarise(
+    n_jurisdicciones = n(),
     media = mean(complejidad_provincia, na.rm = TRUE),
     mediana = median(complejidad_provincia, na.rm = TRUE),
     desvio = sd(complejidad_provincia, na.rm = TRUE),
     minimo = min(complejidad_provincia, na.rm = TRUE),
     maximo = max(complejidad_provincia, na.rm = TRUE)
   )
-# 3. Crear grafico de la complejidad economica de cada provincia
-ggplot(tabla_provincias,
-       aes(x = reorder(provincia, complejidad_provincia),
-           y = complejidad_provincia)) +
-  geom_col() +
+
+print(resumen_icp)
+
+write_csv(
+  resumen_icp,
+  "output/tablas/descriptivas_icp.csv"
+)
+
+
+# 3. GRAFICO DE COMPLEJIDAD ECONOMICA POR PROVINCIA
+
+grafico_icp_provincia <- ggplot(
+  tabla_provincias,
+  aes(
+    x = reorder(provincia, complejidad_provincia),
+    y = complejidad_provincia
+  )
+) +
+  geom_col(fill = "#0072B2") +
   coord_flip() +
   labs(
-    title = "Complejidad economica por provincia",
-    x = "Provincia",
-    y = "complejidad provincial"
+    title = "Complejidad económica de las jurisdicciones argentinas",
+    subtitle = "Índice de Complejidad Provincial",
+    x = "Jurisdicción",
+    y = "Índice de complejidad provincial",
+    caption = "Fuente: Ministerio de Economía de la Nación (2021). Elaboración propia."
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.minor = element_blank()
   )
+
+ggsave(
+  filename = "output/graficos/complejidad_provincial.png",
+  plot = grafico_icp_provincia,
+  width = 9,
+  height = 7,
+  units = "in",
+  dpi = 300
+)
+
+print(grafico_icp_provincia)
 
 # 4. Crear una tabla con solo una observacion por producto
 tabla_productos <- base_da_2 %>%
   distinct(cod_ncm_6d, ncm_6d, seccion, complejidad_producto, centralidad)
 
-# 5. Crea un grafico sobre la distribucion de la complejidad de los productos
-ggplot(
-  tabla_productos %>% filter(!is.na(complejidad_producto)),
+# 5. DISTRIBUCION DE LA COMPLEJIDAD DE LOS PRODUCTOS
+
+productos_complejidad <- tabla_productos %>%
+  filter(!is.na(complejidad_producto))
+
+resumen_productos <- productos_complejidad %>%
+  summarise(
+    n_productos = n(),
+    media = mean(complejidad_producto),
+    mediana = median(complejidad_producto),
+    desvio = sd(complejidad_producto),
+    minimo = min(complejidad_producto),
+    maximo = max(complejidad_producto)
+  )
+
+print(resumen_productos)
+
+write_csv(
+  resumen_productos,
+  "output/tablas/descriptivas_productos.csv"
+)
+
+grafico_distribucion_productos <- ggplot(
+  productos_complejidad,
   aes(x = complejidad_producto)
 ) +
-  geom_histogram(bins = 30) +
+  geom_histogram(
+    bins = 30,
+    fill = "#0072B2",
+    color = "white"
+  ) +
   labs(
-    title = "Distribucion de la complejidad de los productos",
-    x = "Complejidad del producto",
-    y = "Cantidad de productos"
+    title = "Distribución de la complejidad de los productos",
+    subtitle = "Productos con complejidad observada en la base de exportaciones",
+    x = "Índice de complejidad del producto",
+    y = "Cantidad de productos",
+    caption = "Fuente: Ministerio de Economía de la Nación (2021). Elaboración propia."
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.minor = element_blank()
   )
+
+ggsave(
+  filename = "output/graficos/distribucion_complejidad_productos.png",
+  plot = grafico_distribucion_productos,
+  width = 9,
+  height = 5,
+  units = "in",
+  dpi = 300
+)
+
+print(grafico_distribucion_productos)
 
 # 6. Crear una tabla con la complejidad promedio de los productos por seccion
 complejidad_seccion <- tabla_productos %>%
@@ -400,8 +480,243 @@ outliers_provincia <- tabla_provincias %>%
 
 outliers_provincia
 
+# DIAGNOSTICO FINAL DE FALTANTES Y OUTLIERS
 
-# !!!METODO DE INFERENCIA ESTADISTICA(parte 3)!!!
+diagnostico_faltantes <- faltantes_base_2 %>%
+  summarise(
+    registros_con_faltantes = n(),
+    registros_sin_vcr = sum(tiene_vcr == 0, na.rm = TRUE),
+    registros_seccion_otros = sum(as.character(seccion) == "Otros", na.rm = TRUE)
+  )
+
+print(diagnostico_faltantes)
+
+write_csv(
+  diagnostico_faltantes,
+  "output/tablas/diagnostico_faltantes.csv"
+)
+
+resumen_faltantes <- bind_rows(
+  nulos_base_1 %>%
+    mutate(base = "Oportunidades productivas"),
+  nulos_base_2 %>%
+    mutate(base = "Exportaciones")
+) %>%
+  filter(nulos > 0) %>%
+  mutate(
+    variable = recode(
+      variable,
+      centralidad = "Centralidad",
+      complejidad_producto = "Complejidad del producto"
+    )
+  )
+
+write_csv(
+  resumen_faltantes,
+  "output/tablas/resumen_faltantes.csv"
+)
+
+grafico_faltantes <- ggplot(
+  resumen_faltantes,
+  aes(
+    x = reorder(variable, nulos),
+    y = nulos,
+    fill = base
+  )
+) +
+  geom_col(width = 0.7) +
+  coord_flip() +
+  scale_fill_manual(
+    values = c(
+      "Oportunidades productivas" = "#0072B2",
+      "Exportaciones" = "#E69F00"
+    )
+  ) +
+  labs(
+    title = "Valores faltantes en las bases de datos",
+    subtitle = paste0(
+      nrow(faltantes_base_2),
+      " registros con faltantes en la base de exportaciones"
+    ),
+    x = NULL,
+    y = "Cantidad de valores faltantes",
+    fill = "Base",
+    caption = "Fuente: Ministerio de Economía de la Nación (2021). Elaboración propia."
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(panel.grid.minor = element_blank())
+
+ggsave(
+  filename = "output/graficos/valores_faltantes.png",
+  plot = grafico_faltantes,
+  width = 8,
+  height = 5,
+  units = "in",
+  dpi = 300
+)
+
+print(grafico_faltantes)
+
+
+# COMPARACION DE DESCRIPTIVAS DE PRODUCTOS CON Y SIN OUTLIERS
+
+# Se conservan los valores atipicos en la muestra final.
+# La muestra sin ellos se utiliza exclusivamente como analisis de sensibilidad.
+
+productos_vcr_sin_outliers <- productos_vcr %>%
+  anti_join(
+    outliers_producto %>% distinct(cod_ncm_6d),
+    by = "cod_ncm_6d"
+  )
+
+resumen_outliers <- bind_rows(
+  productos_vcr %>%
+    summarise(
+      muestra = "Muestra final: se conservan outliers",
+      n_productos = n(),
+      media = mean(complejidad_producto),
+      mediana = median(complejidad_producto),
+      desvio = sd(complejidad_producto),
+      minimo = min(complejidad_producto),
+      maximo = max(complejidad_producto)
+    ),
+  productos_vcr_sin_outliers %>%
+    summarise(
+      muestra = "Sensibilidad: sin outliers",
+      n_productos = n(),
+      media = mean(complejidad_producto),
+      mediana = median(complejidad_producto),
+      desvio = sd(complejidad_producto),
+      minimo = min(complejidad_producto),
+      maximo = max(complejidad_producto)
+    )
+)
+
+print(resumen_outliers)
+
+write_csv(
+  resumen_outliers,
+  "output/tablas/descriptivas_productos_antes_despues.csv"
+)
+
+
+# COMPARACION DE DESCRIPTIVAS DE COMPLEJIDAD PROVINCIAL
+
+tabla_provincias_sin_outliers <- tabla_provincias %>%
+  anti_join(
+    outliers_provincia %>% distinct(provincia),
+    by = "provincia"
+  )
+
+resumen_icp_antes_despues <- bind_rows(
+  tabla_provincias %>%
+    summarise(
+      muestra = "Muestra final",
+      n_provincias = n(),
+      media = mean(complejidad_provincia, na.rm = TRUE),
+      mediana = median(complejidad_provincia, na.rm = TRUE),
+      desvio = sd(complejidad_provincia, na.rm = TRUE),
+      minimo = min(complejidad_provincia, na.rm = TRUE),
+      maximo = max(complejidad_provincia, na.rm = TRUE)
+    ),
+  tabla_provincias_sin_outliers %>%
+    summarise(
+      muestra = "Sensibilidad sin outliers provinciales",
+      n_provincias = n(),
+      media = mean(complejidad_provincia, na.rm = TRUE),
+      mediana = median(complejidad_provincia, na.rm = TRUE),
+      desvio = sd(complejidad_provincia, na.rm = TRUE),
+      minimo = min(complejidad_provincia, na.rm = TRUE),
+      maximo = max(complejidad_provincia, na.rm = TRUE)
+    )
+)
+
+print(resumen_icp_antes_despues)
+
+write_csv(
+  resumen_icp_antes_despues,
+  "output/tablas/descriptivas_icp_antes_despues.csv"
+)
+
+
+# GRAFICO DE OUTLIERS POR SECCION
+
+orden_secciones <- productos_vcr %>%
+  group_by(seccion) %>%
+  summarise(
+    mediana = median(complejidad_producto),
+    .groups = "drop"
+  ) %>%
+  arrange(mediana) %>%
+  pull(seccion) %>%
+  as.character()
+
+grafico_outliers <- ggplot(
+  productos_vcr,
+  aes(
+    x = factor(seccion, levels = orden_secciones),
+    y = complejidad_producto
+  )
+) +
+  geom_boxplot(
+    fill = "#DCEAF7",
+    color = "#34495E",
+    outlier.shape = NA
+  ) +
+  geom_point(
+    data = outliers_producto,
+    aes(
+      x = factor(seccion, levels = orden_secciones),
+      y = complejidad_producto
+    ),
+    inherit.aes = FALSE,
+    color = "#D55E00",
+    size = 2
+  ) +
+  coord_flip() +
+  labs(
+    title = "Complejidad de los productos con VCR por sección",
+    subtitle = paste0(
+      nrow(outliers_producto),
+      " observaciones identificadas mediante el criterio de 1,5 x IQR; se conservan en la muestra"
+    ),
+    x = "Sección económica",
+    y = "Complejidad del producto",
+    caption = "Fuente: Ministerio de Economía de la Nación (2021). Elaboración propia."
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(panel.grid.minor = element_blank())
+
+ggsave(
+  filename = "output/graficos/outliers_complejidad_seccion.png",
+  plot = grafico_outliers,
+  width = 10,
+  height = 7,
+  units = "in",
+  dpi = 300
+)
+
+print(grafico_outliers)
+
+write_csv(
+  outliers_producto,
+  "output/tablas/outliers_productos.csv"
+)
+
+write_csv(
+  outliers_provincia,
+  "output/tablas/outliers_provincias.csv"
+)
+
+cat("Registros con faltantes:", nrow(faltantes_base_2), "\n")
+cat("Outliers de productos:", nrow(outliers_producto), "\n")
+cat("Outliers provinciales:", nrow(outliers_provincia), "\n")
+
+
+# ANALISIS COMPLEMENTARIO A NIVEL PRODUCTO
+# Pregunta secundaria: ¿la complejidad de los productos con VCR difiere entre secciones?
+# Este análisis no responde directamente la pregunta central a nivel provincial.
+# Se conserva como complemento y no se cuenta entre los tres métodos principales.
 
 # 1. revisar cantidad de productos con VCR por seccion
 productos_vcr %>%
@@ -509,20 +824,19 @@ welch_sin_outliers <- oneway.test(
 welch_sin_outliers
 
 
-### PARTE 4: ANALISIS CUANTITATIVO: INDICE DE THEIL ###
-
+### ANALISIS COMPLEMENTARIO: DESCOMPOSICION DEL INDICE DE THEIL ###
 
 # 1. Filtrar la base y ajustar la escala de complejidad a valores positivos
 base_theil <- base_unida %>%
   filter(tiene_vcr == 1, !is.na(complejidad_producto), !is.na(seccion)) %>%
-  # Desplazamos el mínimo a 1 para habilitar el cálculo de logaritmos
+  # La traslación permite utilizar logaritmos, pero el resultado del Theil depende de esta transformación.
   mutate(complejidad_positiva = complejidad_producto - min(complejidad_producto) + 1)
 
 # 2. Definir parámetros globales del sistema
 c_media_global <- mean(base_theil$complejidad_positiva)
 N_global <- nrow(base_theil)
 
-# 2.1 Calcular el Theil observado directamente para verificar la descomposicion
+# Calcular el Theil observado para descomponerlo entre sectores y dentro de sectores.
 theil_observado <- mean(
   (base_theil$complejidad_positiva / c_media_global) *
     log(base_theil$complejidad_positiva / c_media_global)
@@ -548,7 +862,7 @@ descomposicion_theil <- base_theil %>%
     T_dentro_j = s_j * T_j
   )
 
-# 4. Consolidar el resultado y verificar que la descomposicion cierre
+# Consolidar la descomposición; el cierre algebraico es una identidad y no una prueba de robustez.
 resumen_theil <- tibble(
   Theil_Observado = theil_observado,
   Theil_Entre_Sectores = sum(descomposicion_theil$T_entre_j),
@@ -799,6 +1113,77 @@ shift_share_provincia %>%
     diferencia_maxima_icp = max(abs(diferencia_recalculo), na.rm = TRUE)
   )
 
+write_csv(
+  shift_share_provincia,
+  "output/tablas/shift_share_provincia.csv"
+)
+
+datos_shift_share_grafico <- shift_share_provincia %>%
+  filter(!is.na(icp_provincial)) %>%
+  select(
+    provincia,
+    diferencia_icp,
+    efecto_composicion,
+    efecto_intrasectorial
+  ) %>%
+  pivot_longer(
+    cols = c(efecto_composicion, efecto_intrasectorial),
+    names_to = "componente",
+    values_to = "aporte"
+  ) %>%
+  mutate(
+    componente = recode(
+      componente,
+      efecto_composicion = "Composición sectorial",
+      efecto_intrasectorial = "Diferencias dentro del sector"
+    )
+  )
+
+grafico_shift_share <- ggplot(
+  datos_shift_share_grafico,
+  aes(
+    x = reorder(provincia, diferencia_icp),
+    y = aporte,
+    fill = componente
+  )
+) +
+  geom_hline(yintercept = 0, color = "grey50", linewidth = 0.4) +
+  geom_col(
+    position = position_dodge(width = 0.8),
+    width = 0.7
+  ) +
+  coord_flip() +
+  scale_fill_manual(
+    values = c(
+      "Composición sectorial" = "#0072B2",
+      "Diferencias dentro del sector" = "#E69F00"
+    )
+  ) +
+  labs(
+    title = "Composición sectorial y complejidad dentro de los sectores",
+    subtitle = "Aportes a la brecha del ICP respecto al promedio nacional; 21 provincias con VCR",
+    x = "Provincia",
+    y = "Aporte a la diferencia del ICP",
+    fill = "Componente",
+    caption = "Fuente: Ministerio de Economía de la Nación (2021). Elaboración propia."
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    legend.position = "bottom",
+    panel.grid.minor = element_blank()
+  )
+
+ggsave(
+  filename = "output/graficos/shift_share_componentes.png",
+  plot = grafico_shift_share,
+  width = 11,
+  height = 8,
+  units = "in",
+  dpi = 300
+)
+
+print(grafico_shift_share)
+
 # 5. Generar un gráfico de dispersión facetado (un panel por sector)
 plot_correlacion_indiv <- ggplot(correlacion_individual, 
                                  aes(x = peso_sector, y = complejidad_prov)) +
@@ -872,10 +1257,6 @@ print(t(analisis_magnitud_sesgo))
 
 # ##### TERCERA ENTREGA #####
 # GRAFICO EXPLORATORIO #
-
-library(tidyverse)
-library(ggrepel)
-library(scales)
 
 # ------------------------------------------------------------------------------
 # 1. MATRIZ BASE INDESTRUCTIBLE 
@@ -968,40 +1349,100 @@ wss_cluster <- sapply(1:8, function(k) {
   )$tot.withinss
 })
 
-plot(
-  1:8,
-  wss_cluster,
-  type = "b",
-  xlab = "Cantidad de clusters",
-  ylab = "Suma de cuadrados intra-cluster",
-  main = "Método del codo"
+datos_codo <- tibble(
+  k = 1:8,
+  suma_cuadrados = wss_cluster
 )
 
-# METODO DE SILUETA
+grafico_codo <- ggplot(
+  datos_codo,
+  aes(x = k, y = suma_cuadrados)
+) +
+  geom_line(color = "#0072B2", linewidth = 0.8) +
+  geom_point(color = "#0072B2", size = 2.5) +
+  scale_x_continuous(breaks = 1:8) +
+  labs(
+    title = "Método del codo",
+    subtitle = "Suma de cuadrados intra-cluster según cantidad de grupos",
+    x = "Cantidad de clusters",
+    y = "Suma de cuadrados intra-cluster",
+    caption = "Fuente: elaboración propia sobre la base de Complejidad Económica Provincial (2021)."
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(panel.grid.minor = element_blank())
+
+ggsave(
+  filename = "output/graficos/kmeans_codo.png",
+  plot = grafico_codo,
+  width = 8,
+  height = 5,
+  units = "in",
+  dpi = 300
+)
+
+print(grafico_codo)
+
+# CALCULO DEL INDICE DE SILUETA PARA K=2 A K=8
+
+distancias_cluster <- dist(matriz_cluster_est)
 
 silhouette_promedio <- sapply(2:8, function(k) {
-  km_aux <- kmeans(
+  
+  set.seed(21 + k)
+  
+  modelo_k <- kmeans(
     matriz_cluster_est,
     centers = k,
-    nstart = 25
+    nstart = 100
   )
   
-  mean(
-    cluster::silhouette(
-      km_aux$cluster,
-      dist(matriz_cluster_est)
-    )[, 3]
+  sil_k <- cluster::silhouette(
+    modelo_k$cluster,
+    distancias_cluster
   )
+  
+  mean(sil_k[, "sil_width"])
 })
 
-plot(
-  2:8,
-  silhouette_promedio,
-  type = "b",
-  xlab = "Cantidad de clusters",
-  ylab = "Silueta promedio",
-  main = "Método de silueta"
+print(
+  tibble(
+    k = 2:8,
+    silueta_promedio = silhouette_promedio
+  )
 )
+
+datos_silueta <- tibble(
+  k = 2:8,
+  silueta_promedio = silhouette_promedio
+)
+
+grafico_silueta <- ggplot(
+  datos_silueta,
+  aes(x = k, y = silueta_promedio)
+) +
+  geom_line(color = "#009E73", linewidth = 0.8) +
+  geom_point(color = "#009E73", size = 2.5) +
+  scale_x_continuous(breaks = 2:8) +
+  labs(
+    title = "Método de silueta",
+    subtitle = "Calidad promedio de la asignación de las provincias a los grupos",
+    x = "Cantidad de clusters",
+    y = "Silueta promedio",
+    caption = "Fuente: elaboración propia sobre la base de Complejidad Económica Provincial (2021)."
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(panel.grid.minor = element_blank())
+
+ggsave(
+  filename = "output/graficos/kmeans_silueta.png",
+  plot = grafico_silueta,
+  width = 8,
+  height = 5,
+  units = "in",
+  dpi = 300
+)
+
+print(grafico_silueta)
 
 # GAP STATISTIC
 
@@ -1015,14 +1456,80 @@ gap_cluster <- cluster::clusGap(
 
 print(gap_cluster)
 
-plot(gap_cluster, main = "Estadístico Gap para seleccionar la cantidad de clusters", xlab = "Cantidad de clusters (k)", ylab = "Estadístico Gap")
+datos_gap <- as.data.frame(gap_cluster$Tab) %>%
+  tibble::rownames_to_column("k") %>%
+  mutate(k = as.integer(k))
+
+grafico_gap <- ggplot(
+  datos_gap,
+  aes(x = k, y = gap)
+) +
+  geom_errorbar(
+    aes(ymin = gap - SE.sim, ymax = gap + SE.sim),
+    width = 0.12,
+    color = "grey40"
+  ) +
+  geom_line(color = "#CC79A7", linewidth = 0.8) +
+  geom_point(color = "#CC79A7", size = 2.5) +
+  scale_x_continuous(breaks = 1:8) +
+  labs(
+    title = "Estadístico Gap para seleccionar clusters",
+    subtitle = "Las barras representan un error estándar simulado",
+    x = "Cantidad de clusters",
+    y = "Estadístico Gap",
+    caption = "Fuente: elaboración propia sobre la base de Complejidad Económica Provincial (2021)."
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(panel.grid.minor = element_blank())
+
+ggsave(
+  filename = "output/graficos/kmeans_gap.png",
+  plot = grafico_gap,
+  width = 8,
+  height = 5,
+  units = "in",
+  dpi = 300
+)
+
+print(grafico_gap)
+
+cat(
+  "K recomendado por Gap (Tibshirani):",
+  cluster::maxSE(
+    gap_cluster$Tab[, "gap"],
+    gap_cluster$Tab[, "SE.sim"],
+    method = "Tibs2001SEmax"
+  ),
+  "\n"
+)
+
+cat(
+  "K recomendado por Gap (firstSEmax):",
+  cluster::maxSE(
+    gap_cluster$Tab[, "gap"],
+    gap_cluster$Tab[, "SE.sim"],
+    method = "firstSEmax"
+  ),
+  "\n"
+)
+
+cat(
+  "K con mayor silueta:",
+  which.max(silhouette_promedio) + 1,
+  "\n"
+)
+
+# K=4 se conserva como solución exploratoria e interpretable.
+# La elección se contrasta con el método del codo, la silueta y Gap.
+# Los criterios no necesariamente coinciden, por lo que K=4 no se presenta
+# como una cantidad óptima única, sino como una partición útil para describir perfiles.
 
 set.seed(21)
 
 km4 <- kmeans(
-  scale(matriz_cluster),
+  matriz_cluster_est,
   centers = 4,
-  nstart = 50
+  nstart = 100
 )
 
 clusters_provincia <- participacion_secciones %>%
@@ -1047,6 +1554,48 @@ perfil_clusters <- participacion_secciones %>%
   )
 
 print(perfil_clusters, n = Inf)
+write_csv(
+  perfil_clusters,
+  "output/tablas/perfil_clusters.csv"
+)
+
+grafico_perfil_clusters <- ggplot(
+  perfil_clusters,
+  aes(
+    x = seccion,
+    y = cluster_nombre,
+    fill = participacion_promedio
+  )
+) +
+  geom_tile(color = "white", linewidth = 0.4) +
+  scale_fill_viridis_c(
+    labels = scales::percent_format(accuracy = 1),
+    name = "Participación promedio"
+  ) +
+  labs(
+    title = "Composición sectorial de las canastas VCR por cluster",
+    subtitle = "Participación promedio de cada sección en las provincias de cada grupo",
+    x = "Sección económica",
+    y = "Cluster",
+    caption = "Fuente: Ministerio de Economía de la Nación (2021). Elaboración propia."
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid = element_blank(),
+    legend.position = "bottom"
+  )
+
+ggsave(
+  filename = "output/graficos/perfil_clusters.png",
+  plot = grafico_perfil_clusters,
+  width = 11,
+  height = 6,
+  units = "in",
+  dpi = 300
+)
+
+print(grafico_perfil_clusters)
 
 provincias_por_cluster <- clusters_provincia %>%
   arrange(cluster_nombre, provincia) %>%
@@ -1058,6 +1607,10 @@ provincias_por_cluster <- clusters_provincia %>%
   )
 
 print(provincias_por_cluster, n = Inf)
+write_csv(
+  provincias_por_cluster,
+  "output/tablas/provincias_por_cluster.csv"
+)
 
 sil_k4 <- cluster::silhouette(
   km4$cluster,
@@ -1117,6 +1670,11 @@ modelo_vab_hc3 <- lmtest::coeftest(
 )
 
 print(modelo_vab_hc3)
+write_csv(
+  as.data.frame(modelo_vab_hc3) %>%
+    tibble::rownames_to_column("variable"),
+  "output/tablas/regresion_vab_icp_hc3.csv"
+)
 
 # SENSIBILIDAD: MODELO CON PROVINCIAS QUE TIENEN REGISTROS VCR
 
@@ -1127,6 +1685,19 @@ modelo_vab_21 <- lm(
 )
 
 summary(modelo_vab_21)
+modelo_vab_21_hc3 <- lmtest::coeftest(
+  modelo_vab_21,
+  vcov. = sandwich::vcovHC(modelo_vab_21, type = "HC3")
+)
+
+print(modelo_vab_21_hc3)
+write_csv(
+  as.data.frame(modelo_vab_21_hc3) %>%
+    tibble::rownames_to_column("variable"),
+  "output/tablas/regresion_vab_icp_21_hc3.csv"
+)
+cat("Observaciones del modelo de 21 provincias:", nobs(modelo_vab_21), "\n")
+
 
 # OBSERVACIONES INFLUYENTES
 
@@ -1137,37 +1708,35 @@ diagnosticos_vab <- tibble(
   arrange(desc(distancia_cook))
 
 print(diagnosticos_vab, n = 24)
+write_csv(
+  diagnosticos_vab,
+  "output/tablas/diagnosticos_influencia_regresion.csv"
+)
 
 # GRAFICOS DE DIAGNOSTICO DEL MODELO
 
 plot(modelo_vab, which = 1:4)
 
+# RESULTADOS ROBUSTOS PARA LA REGRESION
 
-# ------------------------------------------------------------------------------
-# 3. TESTEO DINÁMICO DE SIGNIFICATIVIDAD (p < 0.05 = ***)
-# ------------------------------------------------------------------------------
-testear_regresion <- function(data_subset) {
-  if(nrow(data_subset) > 2) { 
-    mod <- summary(lm(complejidad_prov ~ vab_pc_index, data = data_subset))
-    p_val <- mod$coefficients[2,4]
-    return(p_val < 0.05)
-  } else {
-    return(FALSE)
-  }
-}
+p_hc3_general <- unname(
+  modelo_vab_hc3["vab_pc_index", "Pr(>|t|)"]
+)
 
-sig_gen  <- testear_regresion(datos_grafico)
-sig_alta <- testear_regresion(datos_grafico %>% filter(rango_tamaño == "Alta (>= 15%)"))
+n_alta <- sum(
+  datos_grafico$rango_tamaño == "Alta (>= 15%)",
+  na.rm = TRUE
+)
 
 texto_caption <- paste0(
   "Fuente: Complejidad Económica Provincial, Ministerio de Economía de la Nación (2021); ",
-  "VAB per cápita: elaboración propia en base a MEcon e INDEC (2021), ",
-  "Moskovits (2024), Tabla 2. Índice promedio país = 100.\n",
-  "Línea negra: relación lineal para las 24 jurisdicciones (",
-  ifelse(sig_gen, "p < 0,05", "p >= 0,05"),
-  "). Línea roja: jurisdicciones con al menos 15% de Maquinaria y Químicos (",
-  ifelse(sig_alta, "p < 0,05", "p >= 0,05"),
-  ")."
+  "VAB per cápita: Moskovits (2024), Tabla 2. Índice promedio país = 100.\n",
+  "Se incluyen 24 jurisdicciones. p-valor de la pendiente con errores estándar robustos HC3 = ",
+  format.pval(p_hc3_general, digits = 3, eps = 0.001), ".\n",
+  "Línea negra: ajuste lineal para las 24 jurisdicciones. ",
+  "Línea roja: ajuste descriptivo para jurisdicciones con al menos 15% de Maquinaria y Químicos (n = ",
+  n_alta, "); no constituye un segundo test inferencial.\n",
+  "El eje vertical está truncado en 0,25."
 )
 
 # ------------------------------------------------------------------------------
@@ -1238,7 +1807,7 @@ grafico_exploratorio <- ggplot(
 # 5. EXPORTACIÓN TÉCNICA (JPG 300 DPI)
 # ------------------------------------------------------------------------------
 ggsave(
-  filename = "grupo_21_exploratorio.jpg",
+  filename = "output/graficos/grupo_21_exploratorio.jpg",
   plot = grafico_exploratorio,
   width = 25,
   height = 16, 
@@ -1255,10 +1824,6 @@ print(grafico_exploratorio)
 
 # ##### TERCERA ENTREGA #####
 # GRAFICO COMUNICATIVO #
-
-library(tidyverse)
-library(ggrepel)
-library(scales)
 
 # ------------------------------------------------------------------------------
 # 1. MATRIZ BASE INDESTRUCTIBLE Y LIMPIEZA
@@ -1312,6 +1877,10 @@ datos_grafico_comunicativo <- datos_provinciales %>%
     metricas_vcr %>% mutate(provincia = as.character(provincia)),
     by = c("provincia_original" = "provincia")
   ) %>%
+  left_join(
+    clusters_provincia %>% mutate(provincia = as.character(provincia)),
+    by = c("provincia_original" = "provincia")
+  ) %>%
   select(-provincia_original) %>%
   mutate(
     es_lider = case_when(
@@ -1347,11 +1916,19 @@ cor_comunicativo <- cor.test(
 r_com <- unname(cor_comunicativo$estimate)
 pval_com <- cor_comunicativo$p.value
 
+cat(
+  "Correlación de Pearson: r = ",
+  round(r_com, 3),
+  "; p = ",
+  format.pval(pval_com, digits = 3, eps = 0.001),
+  "\n"
+)
+
 texto_caption <- paste0(
   "Fuente: Complejidad Económica Provincial, Ministerio de Economía de la Nación (2021). Elaboración propia.\n",
   "Se incluyen ", nrow(datos_cor_comunicativo),
-  " provincias con al menos un producto con VCR. Las provincias sin VCR se excluyen porque la proporción sectorial no está definida.\n",
-  "La relación es descriptiva y no permite establecer causalidad."
+  " jurisdicciones con al menos un producto con VCR. CABA, Entre Ríos y Río Negro se excluyen porque no tienen canasta con VCR.\n",
+  "El eje vertical está truncado en 0,25."
 )
 
 
@@ -1359,41 +1936,61 @@ texto_caption <- paste0(
 # 4. CONSTRUCCIÓN DEL GRÁFICO COMUNICATIVO
 # ------------------------------------------------------------------------------
 grafico_comunicativo <- ggplot(
-  datos_cor_comunicativo, 
+  datos_cor_comunicativo,
   aes(x = peso_clave, y = complejidad_prov)
 ) +
-  geom_smooth(method = "lm", se = FALSE, color = "black", linetype = "solid", linewidth = 0.8, fullrange = TRUE) +
-  
-  geom_point(aes(color = es_lider, size = es_lider), alpha = 0.85) +
-  
-  geom_text_repel(
-    aes(label = etiqueta, color = es_lider),
-    size = 4, 
-    fontface = "bold",
-    box.padding = 0.6, 
-    point.padding = 0.4, 
-    segment.color = "grey50", 
-    segment.size = 0.4,
-    show.legend = FALSE,
-    max.overlaps = 50
+  geom_smooth(
+    method = "lm",
+    se = FALSE,
+    color = "black",
+    linewidth = 0.8,
+    fullrange = TRUE
   ) +
   
-  scale_color_manual(values = c(
-    "Alta presencia de sectores clave" = "#ed1c24",
-    "Resto" = "grey70"
-  )) +
+  geom_point(
+    aes(color = cluster_nombre, size = es_lider),
+    alpha = 0.85
+  ) +
   
-  scale_size_manual(values = c(
-    "Alta presencia de sectores clave" = 5,
-    "Resto" = 2.5
-  )) +
+  geom_text_repel(
+    aes(label = etiqueta),
+    color = "grey20",
+    size = 4,
+    fontface = "bold",
+    box.padding = 0.6,
+    point.padding = 0.4,
+    segment.color = "grey50",
+    max.overlaps = 50,
+    show.legend = FALSE
+  ) +
   
-  scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_color_manual(
+    values = c(
+      "Cluster 1" = "#0072B2",
+      "Cluster 2" = "#E69F00",
+      "Cluster 3" = "#009E73",
+      "Cluster 4" = "#CC79A7"
+    ),
+    name = "Cluster de canasta VCR"
+  ) +
+  
+  scale_size_manual(
+    values = c(
+      "Alta presencia de sectores clave" = 5,
+      "Resto" = 2.5
+    ),
+    guide = "none"
+  ) +
+  
+  scale_x_continuous(
+    labels = scales::percent_format(accuracy = 1)
+  ) +
+  
   coord_cartesian(ylim = c(NA, 0.25)) +
   
   labs(
     title = "Más peso de Maquinaria y Químicos se asocia con mayor complejidad",
-    subtitle = "Relación observada entre la participación de esos sectores en la canasta con VCR y el índice provincial (2021).",
+    subtitle = "Color: grupo de provincias con canastas VCR similares. Puntos grandes: participación de sectores clave igual o superior al 15%.",
     x = "Productos con VCR en Maquinaria y Químicos (% del total provincial)",
     y = "Índice de Complejidad Provincial",
     caption = texto_caption
@@ -1403,10 +2000,19 @@ grafico_comunicativo <- ggplot(
   theme(
     plot.title = element_text(face = "bold", size = 16, margin = margin(b = 5)),
     plot.subtitle = element_text(color = "grey30", size = 11, margin = margin(b = 15)),
-    plot.caption = element_text(hjust = 0, size = 9, color = "grey40", lineheight = 1.2, margin = margin(t = 20)),
-    legend.position = "none",
+    plot.caption = element_text(
+      hjust = 0,
+      size = 9,
+      color = "grey40",
+      lineheight = 1.2,
+      margin = margin(t = 20)
+    ),
+    legend.position = "bottom",
+    legend.box = "horizontal",
+    legend.title = element_text(face = "bold", size = 9),
+    legend.text = element_text(size = 8),
     panel.grid.minor = element_blank(),
-    panel.grid.major.x = element_blank(), 
+    panel.grid.major.x = element_blank(),
     axis.title = element_text(face = "bold", size = 10, color = "grey20"),
     axis.text = element_text(color = "grey30")
   )
@@ -1415,7 +2021,7 @@ grafico_comunicativo <- ggplot(
 # 5. EXPORTACIÓN TÉCNICA
 # ------------------------------------------------------------------------------
 ggsave(
-  filename = "grupo_21_comunicativo.jpg",
+  filename = "output/graficos/grupo_21_comunicativo.jpg",
   plot = grafico_comunicativo,
   width = 22,
   height = 14, 
