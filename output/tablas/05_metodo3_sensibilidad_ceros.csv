@@ -1,0 +1,5 @@
+muestra,variable_x,variable_y,n,pearson_r,ic95_inf,ic95_sup,p_valor_pearson,spearman_rho,p_valor_spearman
+21 jur. con VCR (con ceros),Maquinaria + Químicos (%),Complejidad Provincial,21,0.8108,0.5833,0.9204,0,0.7636,1e-4
+Solo jur. con >0% en Maq+Quim,Maquinaria + Químicos (%),Complejidad Provincial,20,0.7872,0.5289,0.912,0,0.7263,3e-4
+21 jur. con VCR (con ceros),Maquinaria + Químicos (%),Índice VAB per cápita,21,-0.1929,-0.5766,0.2604,0.4021,0.0065,0.9777
+Solo jur. con >0% en Maq+Quim,Maquinaria + Químicos (%),Índice VAB per cápita,20,0.0184,-0.4276,0.4572,0.9386,0.1656,0.4853

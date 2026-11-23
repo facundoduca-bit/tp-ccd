@@ -1,0 +1,7 @@
+muestra,variable_x,variable_y,n,pearson_r,ic95_inf,ic95_sup,p_valor_pearson,spearman_rho,p_valor_spearman,significativo_5pct
+24 jurisdicciones,Electrónica (%),Complejidad Provincial,24,0.6085,0.2718,0.8125,0.0016,0.6986,1e-4,TRUE
+24 jurisdicciones,Metales (%),Complejidad Provincial,24,0.6335,0.309,0.8258,9e-4,0.6784,3e-4,TRUE
+24 jurisdicciones,Minerales y Combustible (%),Complejidad Provincial,24,-0.334,-0.6498,0.0802,0.1107,-0.3439,0.0999,FALSE
+24 jurisdicciones,Otros (%),Complejidad Provincial,24,-0.4012,-0.6925,0.0026,0.052,-0.5658,0.004,TRUE
+24 jurisdicciones,Textiles (%),Complejidad Provincial,24,0.2463,-0.1744,0.591,0.2459,0.1417,0.5088,FALSE
+24 jurisdicciones,Vehículos y Transporte (%),Complejidad Provincial,24,0.2078,-0.2135,0.5639,0.3299,0.1428,0.5056,FALSE

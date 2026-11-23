@@ -1,0 +1,17 @@
+muestra,variable_x,variable_y,n,pearson_r,ic95_inf,ic95_sup,p_valor_pearson,spearman_rho,p_valor_spearman
+24 jurisdicciones,"Agro, Alimentos y Bebidas (%)",Complejidad Provincial,24,-0.5826,-0.7984,-0.2343,0.0028,-0.5741,0.0034
+24 jurisdicciones,Maquinaria (%),Complejidad Provincial,24,0.4632,0.0736,0.7302,0.0226,0.4973,0.0134
+24 jurisdicciones,Químicos (%),Complejidad Provincial,24,0.3177,-0.0983,0.6392,0.1303,0.3033,0.1497
+24 jurisdicciones,Maquinaria + Químicos (%),Complejidad Provincial,24,0.4253,0.0265,0.7074,0.0383,0.3943,0.0565
+24 jurisdicciones,Índice VAB per cápita,Complejidad Provincial,24,0.268,-0.1518,0.6059,0.2055,0.365,0.0795
+24 jurisdicciones,"Agro, Alimentos y Bebidas (%)",Índice VAB per cápita,24,-0.4416,-0.7172,-0.0465,0.0307,-0.4924,0.0145
+24 jurisdicciones,Maquinaria (%),Índice VAB per cápita,24,-0.1041,-0.487,0.3124,0.6284,0.0729,0.7349
+24 jurisdicciones,Químicos (%),Índice VAB per cápita,24,-0.3408,-0.6543,0.0725,0.1031,-0.2962,0.1599
+24 jurisdicciones,Maquinaria + Químicos (%),Índice VAB per cápita,24,-0.2999,-0.6274,0.1177,0.1545,-0.2123,0.3192
+21 jur. con VCR,"Agro, Alimentos y Bebidas (%)",Complejidad Provincial,21,-0.4798,-0.7551,-0.0606,0.0277,-0.4709,0.0312
+21 jur. con VCR,Maquinaria (%),Complejidad Provincial,21,0.745,0.4618,0.8903,1e-4,0.7581,1e-4
+21 jur. con VCR,Químicos (%),Complejidad Provincial,21,0.6432,0.2928,0.8413,0.0017,0.5964,0.0043
+21 jur. con VCR,Maquinaria + Químicos (%),Complejidad Provincial,21,0.8108,0.5833,0.9204,0,0.7636,1e-4
+21 jur. con VCR,Índice VAB per cápita,Complejidad Provincial,21,-0.0047,-0.4355,0.4278,0.9838,0.2743,0.2289
+21 jur. con VCR,"Agro, Alimentos y Bebidas (%)",Índice VAB per cápita,21,-0.3346,-0.6696,0.1135,0.1382,-0.4008,0.0717
+21 jur. con VCR,Maquinaria + Químicos (%),Índice VAB per cápita,21,-0.1929,-0.5766,0.2604,0.4021,0.0065,0.9777

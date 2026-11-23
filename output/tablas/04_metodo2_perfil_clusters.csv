@@ -1,0 +1,33 @@
+cluster_nombre,seccion,participacion_promedio
+Cluster 1,"Agro, Alimentos y Bebidas",0.5638888888888889
+Cluster 1,Electrónica,0.027777777777777776
+Cluster 1,Maquinaria,0.024999999999999998
+Cluster 1,Metales,0.049999999999999996
+Cluster 1,Minerales y Combustible,0.2472222222222222
+Cluster 1,Químicos,0.06111111111111111
+Cluster 1,Textiles,0.024999999999999998
+Cluster 1,Vehículos y Transporte,0
+Cluster 2,"Agro, Alimentos y Bebidas",0.8030343341569085
+Cluster 2,Electrónica,0
+Cluster 2,Maquinaria,0.011922045240860572
+Cluster 2,Metales,0.028322823711138975
+Cluster 2,Minerales y Combustible,0.039253876638644956
+Cluster 2,Químicos,0.07758605649069211
+Cluster 2,Textiles,0.03988086376175492
+Cluster 2,Vehículos y Transporte,0
+Cluster 3,"Agro, Alimentos y Bebidas",0.4413793103448276
+Cluster 3,Electrónica,0
+Cluster 3,Maquinaria,0.054741379310344826
+Cluster 3,Metales,0.10344827586206896
+Cluster 3,Minerales y Combustible,0.029741379310344828
+Cluster 3,Químicos,0.0375
+Cluster 3,Textiles,0.3331896551724138
+Cluster 3,Vehículos y Transporte,0
+Cluster 4,"Agro, Alimentos y Bebidas",0.5516172463462219
+Cluster 4,Electrónica,0.008124057735890942
+Cluster 4,Maquinaria,0.08990976491663032
+Cluster 4,Metales,0.07421541316641347
+Cluster 4,Minerales y Combustible,0.039128755311193704
+Cluster 4,Químicos,0.185566422996154
+Cluster 4,Textiles,0.03486462540758656
+Cluster 4,Vehículos y Transporte,0.016573714119909072

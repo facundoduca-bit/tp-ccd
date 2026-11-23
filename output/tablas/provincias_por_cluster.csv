@@ -1,0 +1,5 @@
+cluster_nombre,cantidad_provincias,provincias
+Cluster 1,6,"Buenos Aires, Córdoba, Mendoza, San Luis, Santa Fe, Tucumán"
+Cluster 2,9,"Catamarca, Chaco, Corrientes, Formosa, Jujuy, La Pampa, Misiones, Salta, Santiago del Estero"
+Cluster 3,2,"Chubut, La Rioja"
+Cluster 4,4,"Neuquén, San Juan, Santa Cruz, Tierra del Fuego"

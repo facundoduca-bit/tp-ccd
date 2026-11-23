@@ -1,0 +1,5 @@
+segmento,n,intercepto_beta0,pendiente_beta1,ee_hc3,t_hc3,p_valor_hc3,r2,significativo_95
+Tendencia general (24 jurisdicciones),24,-0.88387,0.001384,0.002067,0.6699,0.5099,0.0718,FALSE
+Subgrupo Maq+Quim < 5%,7,-1.00112,0.001597,0.004536,0.3521,0.7391,0.1042,FALSE
+Subgrupo Maq+Quim 5% - 15%,7,-1.09254,0.001595,6.47e-4,2.466,0.0568,0.4053,FALSE
+Subgrupo Maq+Quim >= 15%,10,-1.23542,0.009141,0.003942,2.3191,0.049,0.4652,TRUE

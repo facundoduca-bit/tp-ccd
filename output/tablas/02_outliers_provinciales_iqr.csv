@@ -1,0 +1,5 @@
+variable,provincia,valor,lim_inf,lim_sup
+peso_quimicos,Buenos Aires,0.30547550432276654,-0.15571370886331515,0.3039672925499697
+vab_pc_index,CABA,307,-58.125,222.875
+vab_pc_index,Santa Cruz,267,-58.125,222.875
+vab_pc_index,Neuquén,244,-58.125,222.875

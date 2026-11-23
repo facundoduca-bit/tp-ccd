@@ -1,0 +1,8 @@
+cod_ncm_6d,ncm_6d,seccion,complejidad_producto,q1,q3,iqr,lim_inf,lim_sup,tipo_outlier
+310390,Hidrogenoortofosfato de calcio y otros fosfatos,Químicos,-1.6397,-0.2011,0.7227,0.9238,-1.5868,2.1084,Atípico bajo
+382319,Ácidos grasos monocarboxílicos ind. ncp,Químicos,-1.8399,-0.2011,0.7227,0.9238,-1.5868,2.1084,Atípico bajo
+710310,"Piedras preciosas o semipreciosas naturales, en bruto, simplemente aserradas o desbastadas, excl. diamantes",Metales,-2.3745,-0.60475,0.39195,0.9967,-2.0998,1.887,Atípico bajo
+710812,"Oro p/uso no monetario, formas en bruto de aleación dorada o bullón dorado",Metales,-2.9532,-0.60475,0.39195,0.9967,-2.0998,1.887,Atípico bajo
+120230,Maníes crudos s/cáscara p/siembra,"Agro, Alimentos y Bebidas",-2.9055,-1.195575,-0.068175,1.1274,-2.8866750000000003,1.622925,Atípico bajo
+150810,Aceite de maní en bruto,"Agro, Alimentos y Bebidas",-3.3926,-1.195575,-0.068175,1.1274,-2.8866750000000003,1.622925,Atípico bajo
+120740,Semilla de sésamo p/siembra,"Agro, Alimentos y Bebidas",-3.2944,-1.195575,-0.068175,1.1274,-2.8866750000000003,1.622925,Atípico bajo
