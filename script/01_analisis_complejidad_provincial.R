@@ -14,9 +14,23 @@ library(cluster)
 library(sandwich)
 library(lmtest)
 
+dir.create("raw", recursive = TRUE, showWarnings = FALSE)
+dir.create("auxiliar", recursive = TRUE, showWarnings = FALSE)
 dir.create("input", recursive = TRUE, showWarnings = FALSE)
 dir.create("output/tablas", recursive = TRUE, showWarnings = FALSE)
 dir.create("output/graficos", recursive = TRUE, showWarnings = FALSE)
+
+buscar_archivo <- function(candidatos) {
+  existentes <- candidatos[file.exists(candidatos)]
+  if (length(existentes) == 0) {
+    stop(
+      "No se encontró ninguno de los archivos candidatos:\n  - ",
+      paste(candidatos, collapse = "\n  - "),
+      call. = FALSE
+    )
+  }
+  existentes[1]
+}
 
 # Función robusta de normalización de nombres de jurisdicciones (insensible a tildes y encoding)
 normalizar_provincia <- function(x) {
@@ -91,8 +105,19 @@ coeftest_a_df <- function(ct, nombre_modelo) {
 # ==============================================================================
 # 1. CARGA, NORMALIZACIÓN, UNIÓN Y AUDITORÍA DE INTEGRIDAD
 # ==============================================================================
-ruta_b1 <- if (file.exists("raw/base_da_1 (1).csv")) "raw/base_da_1 (1).csv" else "base_da_1 (1).csv"
-ruta_b2 <- if (file.exists("raw/base_da_2 (1).csv")) "raw/base_da_2 (1).csv" else "base_da_2 (1).csv"
+ruta_b1 <- buscar_archivo(c(
+  "raw/base_da_1.csv",
+  "raw/base_da_1 (1).csv",
+  "base_da_1.csv",
+  "base_da_1 (1).csv"
+))
+
+ruta_b2 <- buscar_archivo(c(
+  "raw/base_da_2.csv",
+  "raw/base_da_2 (1).csv",
+  "base_da_2.csv",
+  "base_da_2 (1).csv"
+))
 
 base_da_1 <- read_csv(ruta_b1, show_col_types = FALSE) %>%
   mutate(
@@ -176,6 +201,7 @@ base_vab_auxiliar <- tibble(
 
 stopifnot(setequal(unique(auditoria_icp$provincia), base_vab_auxiliar$provincia))
 
+write_csv(base_vab_auxiliar, "auxiliar/vab_per_capita_2021.csv")
 write_rds(base_unida, "input/base_unida_limpia.rds")
 write_csv(base_vab_auxiliar, "input/base_vab_pc_auxiliar.csv")
 
@@ -237,10 +263,6 @@ grafico_faltantes <- ggplot(
 ggsave("output/graficos/02_valores_faltantes.jpg", grafico_faltantes, width = 20, height = 11, units = "cm", dpi = 300)
 
 # 2.2 Estadísticas descriptivas a nivel producto y por sección económica
-productos_unicos <- base_unida %>%
-  filter(!is.na(complejidad_producto), !is.na(seccion)) %>%
-  distinct(cod_ncm_6d, ncm_6d, seccion, complejidad_producto)
-
 productos_vcr <- base_da_2 %>%
   filter(tiene_vcr == 1, !is.na(complejidad_producto), !is.na(seccion)) %>%
   distinct(cod_ncm_6d, ncm_6d, seccion, complejidad_producto)
@@ -373,7 +395,6 @@ metricas_vcr_prov <- base_da_2 %>%
     .groups = "drop"
   )
 
-# Sector líder sobre productos con VCR == 1
 sector_lider_vcr <- base_da_2 %>%
   filter(tiene_vcr == 1, !is.na(seccion)) %>%
   count(provincia, seccion) %>%
@@ -382,7 +403,6 @@ sector_lider_vcr <- base_da_2 %>%
   ungroup() %>%
   select(provincia, sector_lider_vcr = seccion)
 
-# Sector líder determinista sobre el total exportado en base_da_2 para las jurisdicciones sin VCR == 1
 sector_lider_respaldo <- base_da_2 %>%
   filter(!is.na(seccion), seccion != "Otros") %>%
   count(provincia, seccion) %>%
@@ -417,7 +437,6 @@ base_provincial <- auditoria_icp %>%
   ) %>%
   select(-sector_lider_vcr, -sector_lider_respaldo)
 
-# Tabla de estadísticas descriptivas provinciales (24 jurisdicciones)
 descriptivas_provinciales_24 <- base_provincial %>%
   summarise(
     across(
@@ -441,7 +460,6 @@ descriptivas_provinciales_24 <- base_provincial %>%
 
 write_csv(descriptivas_provinciales_24, "output/tablas/02_descriptivas_provinciales_24.csv")
 
-# Detección de outliers provinciales con criterio 1,5 x IQR
 detectar_iqr_vector <- function(df, var_nombre) {
   v <- df[[var_nombre]]
   q1 <- quantile(v, 0.25, na.rm = TRUE)
@@ -471,7 +489,6 @@ outliers_provinciales <- bind_rows(
 
 write_csv(outliers_provinciales, "output/tablas/02_outliers_provinciales_iqr.csv")
 
-# Comparación antes y después a nivel provincial (con vs. sin outliers de VAB per cápita)
 prov_out_vab <- outliers_provinciales %>%
   filter(variable == "vab_pc_index") %>%
   pull(provincia)
@@ -528,7 +545,7 @@ grafico_icp_ranking <- ggplot(
 ggsave("output/graficos/02_complejidad_por_provincia.jpg", grafico_icp_ranking, width = 22, height = 16, units = "cm", dpi = 300)
 
 # ==============================================================================
-# 3. MÉTODO 1 (INICIAL): DESCOMPOSICIÓN DE THEIL + SHIFT-SHARE PROVINCIAL
+# 3. MÉTODO 1: DESCOMPOSICIÓN DE THEIL + SHIFT-SHARE PROVINCIAL
 # ==============================================================================
 pares_vcr_activos <- base_da_2 %>%
   filter(tiene_vcr == 1, !is.na(complejidad_producto), !is.na(seccion))
@@ -766,8 +783,6 @@ clusters_vcr <- participacion_secciones %>%
     tipo_asignacion = "K-means (canasta VCR)"
   )
 
-# Asignación determinista de las 3 provincias sin VCR=1 en base_da_2 (CABA, Entre Ríos, Río Negro)
-# al centroide de cluster más cercano según su composición sectorial observada en base_da_2
 provincias_faltantes_cluster <- setdiff(base_provincial$provincia, clusters_vcr$provincia)
 
 props_faltantes_ancho <- base_da_2 %>%
@@ -849,7 +864,6 @@ ggsave("output/graficos/04_metodo2_perfil_clusters.jpg", grafico_perfil_clusters
 base_provincial <- base_provincial %>%
   left_join(clusters_prov %>% select(provincia, cluster_id, cluster_nombre, tipo_asignacion), by = "provincia")
 
-# Descriptivas provinciales por cluster (24 jurisdicciones)
 descriptivas_por_cluster <- base_provincial %>%
   group_by(cluster_nombre) %>%
   summarise(
@@ -899,22 +913,16 @@ calcular_correlaciones <- function(df, x_var, y_var, grupo_muestra, sector_etiqu
 
 base_prov_vcr <- base_provincial %>% filter(productos_vcr_total > 0)
 
-# 5.1 Batería completa de correlaciones: Sectores clave vs. Complejidad Provincial y vs. VAB per cápita
 tabla_correlaciones_final <- bind_rows(
-  # --- CONTRA COMPLEJIDAD PROVINCIAL (24 jurisdicciones) ---
   calcular_correlaciones(base_provincial, "peso_agro",       "complejidad_prov", "24 jurisdicciones", "Agro, Alimentos y Bebidas (%)", "Complejidad Provincial"),
   calcular_correlaciones(base_provincial, "peso_maquinaria", "complejidad_prov", "24 jurisdicciones", "Maquinaria (%)", "Complejidad Provincial"),
   calcular_correlaciones(base_provincial, "peso_quimicos",   "complejidad_prov", "24 jurisdicciones", "Químicos (%)", "Complejidad Provincial"),
   calcular_correlaciones(base_provincial, "peso_maq_quim",   "complejidad_prov", "24 jurisdicciones", "Maquinaria + Químicos (%)", "Complejidad Provincial"),
   calcular_correlaciones(base_provincial, "vab_pc_index",    "complejidad_prov", "24 jurisdicciones", "Índice VAB per cápita", "Complejidad Provincial"),
-  
-  # --- CONTRA VAB PER CÁPITA PROVINCIAL (24 jurisdicciones) ---
   calcular_correlaciones(base_provincial, "peso_agro",       "vab_pc_index", "24 jurisdicciones", "Agro, Alimentos y Bebidas (%)", "Índice VAB per cápita"),
   calcular_correlaciones(base_provincial, "peso_maquinaria", "vab_pc_index", "24 jurisdicciones", "Maquinaria (%)", "Índice VAB per cápita"),
   calcular_correlaciones(base_provincial, "peso_quimicos",   "vab_pc_index", "24 jurisdicciones", "Químicos (%)", "Índice VAB per cápita"),
   calcular_correlaciones(base_provincial, "peso_maq_quim",   "vab_pc_index", "24 jurisdicciones", "Maquinaria + Químicos (%)", "Índice VAB per cápita"),
-  
-  # --- CONTRA COMPLEJIDAD PROVINCIAL Y VAB PER CÁPITA (21 jurisdicciones con VCR activo) ---
   calcular_correlaciones(base_prov_vcr, "peso_agro",       "complejidad_prov", "21 jur. con VCR", "Agro, Alimentos y Bebidas (%)", "Complejidad Provincial"),
   calcular_correlaciones(base_prov_vcr, "peso_maquinaria", "complejidad_prov", "21 jur. con VCR", "Maquinaria (%)", "Complejidad Provincial"),
   calcular_correlaciones(base_prov_vcr, "peso_quimicos",   "complejidad_prov", "21 jur. con VCR", "Químicos (%)", "Complejidad Provincial"),
@@ -924,7 +932,6 @@ tabla_correlaciones_final <- bind_rows(
   calcular_correlaciones(base_prov_vcr, "peso_maq_quim",   "vab_pc_index",     "21 jur. con VCR", "Maquinaria + Químicos (%)", "Índice VAB per cápita")
 )
 
-# 5.1b Correlaciones del resto de los sectores económicos vs. Complejidad Provincial (24 jurisdicciones)
 todas_provincias <- base_provincial %>% distinct(provincia)
 todas_secciones  <- base_da_2 %>% filter(!is.na(seccion)) %>% distinct(seccion)
 
@@ -959,7 +966,6 @@ correlaciones_resto_sectores_24 <- map_dfr(sectores_resto_24, function(sec) {
     mutate(significativo_5pct = (p_valor_pearson < 0.05) | (p_valor_spearman < 0.05))
 })
 
-# 5.2 Sensibilidad a la inclusión de provincias con participación 0% en Maquinaria + Químicos
 base_sin_ceros_mq <- base_prov_vcr %>% filter(peso_maq_quim > 0)
 sensibilidad_ceros_mq <- bind_rows(
   calcular_correlaciones(base_prov_vcr,     "peso_maq_quim", "complejidad_prov", "21 jur. con VCR (con ceros)", "Maquinaria + Químicos (%)", "Complejidad Provincial"),
@@ -968,7 +974,6 @@ sensibilidad_ceros_mq <- bind_rows(
   calcular_correlaciones(base_sin_ceros_mq, "peso_maq_quim", "vab_pc_index",     "Solo jur. con >0% en Maq+Quim", "Maquinaria + Químicos (%)", "Índice VAB per cápita")
 )
 
-# 5.3 Correlaciones al interior de cada cluster (n >= 4)
 cor_por_cluster <- base_prov_vcr %>%
   group_by(cluster_nombre) %>%
   filter(n() >= 4) %>%
@@ -985,7 +990,6 @@ write_csv(correlaciones_resto_sectores_24, "output/tablas/05_metodo3_correlacion
 write_csv(sensibilidad_ceros_mq, "output/tablas/05_metodo3_sensibilidad_ceros.csv")
 write_csv(cor_por_cluster, "output/tablas/05_metodo3_correlaciones_por_cluster.csv")
 
-# Gráfico matriz 2x2 de correlaciones: Sectores clave vs. Complejidad Provincial y vs. VAB per cápita
 datos_matriz_cor <- base_provincial %>%
   select(provincia, cluster_nombre, complejidad_prov, vab_pc_index, peso_agro, peso_maq_quim) %>%
   pivot_longer(
@@ -1105,7 +1109,6 @@ datos_exploratorio <- base_provincial %>%
     )
   )
 
-# Evaluación de coeficientes y significatividad al 95% (alpha = 0,05) de las líneas de tendencia
 evaluar_tendencia_vab <- function(df_sub, etiqueta_grupo) {
   mod <- lm(complejidad_prov ~ vab_pc_index, data = df_sub)
   ct  <- lmtest::coeftest(mod, vcov. = sandwich::vcovHC(mod, type = "HC3"))
@@ -1178,9 +1181,7 @@ grafico_exploratorio <- ggplot(
   scale_shape_manual(
     values = c(
       "Agro, Alimentos y Bebidas" = 15,
-      "Textiles" = 17,
-      "Minerales y Combustible" = 18,
-      "Químicos" = 8
+      "Textiles" = 17
     )
   ) +
   scale_color_manual(
@@ -1342,430 +1343,3 @@ print(tabla_hc3_final)
 
 cat("\n=== 7b. SIGNIFICATIVIDAD AL 95% DE LÍNEAS DE TENDENCIA (GRÁFICO EXPLORATORIO) ===\n")
 print(tabla_tendencias_exploratorio, width = Inf)
-
-print(grafico_shift_share)
-print(grafico_exploratorio)
-print(grafico_comunicativo)
-
-
-
-# ==============================================================================
-# SCRIPT ANEXO: GENERACIÓN DE TABLAS Y FIGURAS PARA ANEXO DE PRESENTACIÓN FINAL
-# Proyecto: Complejidad Económica Provincial en Argentina (2021) - Grupo 21
-# ==============================================================================
-
-library(tidyverse)
-library(lmtest)
-library(sandwich)
-library(broom)
-library(scales)
-
-# Crear carpetas de salida si no existen
-dir.create("output/graficos", recursive = TRUE, showWarnings = FALSE)
-dir.create("output/tablas", recursive = TRUE, showWarnings = FALSE)
-
-# ------------------------------------------------------------------------------
-# 1. LOCALIZACIÓN Y CARGA DE DATOS (Rutas relativas, sin setwd ni rutas fijas)
-# ------------------------------------------------------------------------------
-buscar_archivo <- function(candidatos) {
-  existentes <- candidatos[file.exists(candidatos)]
-  if (length(existentes) == 0) {
-    stop(
-      "No se encontró ninguno de los archivos candidatos:\n  - ",
-      paste(candidatos, collapse = "\n  - "),
-      call. = FALSE
-    )
-  }
-  existentes[1]
-}
-
-ruta_da_1 <- buscar_archivo(c(
-  "raw/base_da_1.csv",
-  "raw/base_da_1 (1).csv",
-  "input/base_da_1.csv",
-  "base_da_1.csv",
-  "base_da_1 (1).csv"
-))
-
-ruta_da_2 <- buscar_archivo(c(
-  "raw/base_da_2.csv",
-  "raw/base_da_2 (1).csv",
-  "input/base_da_2.csv",
-  "base_da_2.csv",
-  "base_da_2 (1).csv"
-))
-
-message("Leyendo base_da_1 desde: ", ruta_da_1)
-message("Leyendo base_da_2 desde: ", ruta_da_2)
-
-base_da_1 <- read_csv(ruta_da_1, show_col_types = FALSE)
-base_da_2 <- read_csv(ruta_da_2, show_col_types = FALSE)
-
-normalizar_provincia <- function(x) {
-  s <- iconv(tolower(trimws(as.character(x))), from = "UTF-8", to = "ASCII//TRANSLIT")
-  case_when(
-    str_detect(s, "ciudad|caba|capital") ~ "CABA",
-    str_detect(s, "buenos aires")        ~ "Buenos Aires",
-    str_detect(s, "catamarca")           ~ "Catamarca",
-    str_detect(s, "chaco")               ~ "Chaco",
-    str_detect(s, "chubut")              ~ "Chubut",
-    str_detect(s, "cordoba")             ~ "Córdoba",
-    str_detect(s, "corrientes")          ~ "Corrientes",
-    str_detect(s, "entre rios")          ~ "Entre Ríos",
-    str_detect(s, "formosa")             ~ "Formosa",
-    str_detect(s, "jujuy")               ~ "Jujuy",
-    str_detect(s, "la pampa")            ~ "La Pampa",
-    str_detect(s, "la rioja")            ~ "La Rioja",
-    str_detect(s, "mendoza")             ~ "Mendoza",
-    str_detect(s, "misiones")            ~ "Misiones",
-    str_detect(s, "neuquen")             ~ "Neuquén",
-    str_detect(s, "rio negro")           ~ "Río Negro",
-    str_detect(s, "salta")               ~ "Salta",
-    str_detect(s, "san juan")            ~ "San Juan",
-    str_detect(s, "san luis")            ~ "San Luis",
-    str_detect(s, "santa cruz")          ~ "Santa Cruz",
-    str_detect(s, "santa fe")            ~ "Santa Fe",
-    str_detect(s, "santiago")            ~ "Santiago del Estero",
-    str_detect(s, "tierra del fuego")    ~ "Tierra del Fuego",
-    str_detect(s, "tucuman")             ~ "Tucumán",
-    TRUE ~ as.character(x)
-  )
-}
-
-normalizar_seccion <- function(x) {
-  s <- iconv(tolower(trimws(as.character(x))), from = "UTF-8", to = "ASCII//TRANSLIT")
-  case_when(
-    str_detect(s, "agro")                          ~ "Agro, Alimentos y Bebidas",
-    str_detect(s, "maquinaria")                    ~ "Maquinaria",
-    str_detect(s, "quimic")                        ~ "Químicos",
-    str_detect(s, "textil")                        ~ "Textiles",
-    str_detect(s, "mineral|combust")               ~ "Minerales y Combustible",
-    str_detect(s, "metal") & !str_detect(s, "min") ~ "Metales",
-    str_detect(s, "plastic|caucho")                ~ "Plásticos y Caucho",
-    str_detect(s, "madera|papel")                  ~ "Madera y Papel",
-    str_detect(s, "vehicul|transp")                ~ "Vehículos y Transporte",
-    str_detect(s, "piedra|vidrio")                 ~ "Piedras y Vidrio",
-    str_detect(s, "otro")                          ~ "Otros",
-    TRUE ~ str_trim(as.character(x))
-  )
-}
-
-base_da_1 <- base_da_1 %>%
-  mutate(
-    provincia = normalizar_provincia(provincia),
-    seccion   = normalizar_seccion(seccion)
-  )
-
-base_da_2 <- base_da_2 %>%
-  mutate(
-    provincia = normalizar_provincia(provincia),
-    seccion   = normalizar_seccion(seccion)
-  )
-
-# Base auxiliar VAB per cápita (Moskovits, 2024, Tabla 2; promedio país = 100)
-vab_aux <- tibble(
-  provincia = c(
-    "CABA", "Buenos Aires", "Catamarca", "Chaco", "Chubut", "Córdoba",
-    "Corrientes", "Entre Ríos", "Formosa", "Jujuy", "La Pampa", "La Rioja",
-    "Mendoza", "Misiones", "Neuquén", "Río Negro", "Salta", "San Juan",
-    "San Luis", "Santa Cruz", "Santa Fe", "Santiago del Estero",
-    "Tierra del Fuego", "Tucumán"
-  ),
-  vab_pc_index = c(
-    307, 77, 45, 42, 134, 102,
-    48, 81, 31, 41, 115, 42,
-    92, 66, 244, 116, 54, 66,
-    64, 267, 122, 41,
-    150, 51
-  )
-)
-
-# Consolidación provincial (24 jurisdicciones)
-metricas_vcr <- base_da_2 %>%
-  filter(tiene_vcr == 1, !is.na(seccion)) %>%
-  group_by(provincia) %>%
-  summarise(
-    productos_vcr_total  = n(),
-    productos_agro       = sum(seccion == "Agro, Alimentos y Bebidas"),
-    productos_maquinaria = sum(seccion == "Maquinaria"),
-    productos_quimicos   = sum(seccion == "Químicos"),
-    productos_maq_quim   = productos_maquinaria + productos_quimicos,
-    peso_agro            = productos_agro / productos_vcr_total,
-    peso_maquinaria      = productos_maquinaria / productos_vcr_total,
-    peso_quimicos        = productos_quimicos / productos_vcr_total,
-    peso_maq_quim        = productos_maq_quim / productos_vcr_total,
-    .groups = "drop"
-  )
-
-base_prov <- base_da_2 %>%
-  distinct(cod_provincia, provincia, complejidad_prov = complejidad_provincia) %>%
-  left_join(metricas_vcr, by = "provincia") %>%
-  left_join(vab_aux, by = "provincia") %>%
-  mutate(across(starts_with("productos_") | starts_with("peso_"), ~ replace_na(.x, 0)))
-
-# ==============================================================================
-# 2. TEMA UNIFICADO PARA TODOS LOS GRÁFICOS DEL ANEXO
-# ==============================================================================
-tema_anexo <- theme_minimal(base_size = 12) +
-  theme(
-    plot.title       = element_text(face = "bold", size = 14, color = "#1B365D", margin = margin(b = 4)),
-    plot.subtitle    = element_text(size = 10.5, color = "#4A5568", margin = margin(b = 12)),
-    plot.caption     = element_text(size = 9, color = "#718096", hjust = 0, margin = margin(t = 10)),
-    axis.title       = element_text(size = 11, color = "#1A202C"),
-    axis.text        = element_text(size = 10, color = "#1A202C"),
-    panel.grid.minor = element_blank(),
-    panel.grid.major = element_line(color = "#E2E8F0", linewidth = 0.5),
-    legend.position  = "bottom",
-    legend.title     = element_blank(),
-    legend.text      = element_text(size = 10),
-    plot.background  = element_rect(fill = "white", color = NA),
-    panel.background = element_rect(fill = "white", color = NA)
-  )
-
-# ==============================================================================
-# 3. FIGURAS DEL ANEXO (Exportadas con ggsave a output/graficos/)
-# ==============================================================================
-
-# --- FIGURA A1: Diagnóstico de outliers en VAB per cápita (24 jurisdicciones) ---
-q1_vab <- quantile(base_prov$vab_pc_index, 0.25)
-q3_vab <- quantile(base_prov$vab_pc_index, 0.75)
-lim_sup_vab <- q3_vab + 1.5 * (q3_vab - q1_vab)
-
-fig_a1 <- base_prov %>%
-  mutate(
-    categoria_iqr = if_else(
-      vab_pc_index > lim_sup_vab,
-      "Atípico alto (> 222,9; n = 3)",
-      "Dentro de rango IQR (n = 21)"
-    ),
-    provincia = fct_reorder(provincia, vab_pc_index)
-  ) %>%
-  ggplot(aes(x = vab_pc_index, y = provincia, fill = categoria_iqr)) +
-  geom_col(width = 0.72) +
-  geom_vline(xintercept = 100, linetype = "dashed", color = "#4A5568", linewidth = 0.8) +
-  geom_vline(xintercept = lim_sup_vab, linetype = "dotted", color = "#C53030", linewidth = 1) +
-  geom_text(
-    aes(label = vab_pc_index, fontface = if_else(vab_pc_index > lim_sup_vab, "bold", "plain")),
-    hjust = -0.2, size = 3.4, color = "#1A202C"
-  ) +
-  scale_fill_manual(values = c(
-    "Atípico alto (> 222,9; n = 3)" = "#D97706",
-    "Dentro de rango IQR (n = 21)"  = "#1D6FA5"
-  )) +
-  scale_x_continuous(limits = c(0, 340), expand = expansion(mult = c(0, 0.02))) +
-  labs(
-    title    = "Figura A1. Diagnóstico de valores atípicos en el Índice de VAB per cápita",
-    subtitle = "CABA (307), Santa Cruz (267) y Neuquén (244) superan el límite superior 1,5 × IQR = 222,9 (año 2021)",
-    x        = "Índice de VAB per cápita (promedio nacional = 100)",
-    y        = "Jurisdicción",
-    caption  = "Fuente: Moskovits (2024, Tabla 2) sobre datos del Ministerio de Economía e INDEC. Línea punteada: promedio nacional (100)."
-  ) +
-  tema_anexo +
-  theme(panel.grid.major.y = element_blank())
-
-ggsave("output/graficos/anexo_figura_a1_outliers_vab.png", fig_a1, width = 10, height = 6.5, dpi = 300)
-
-
-# --- FIGURA A2: Descomposición de Theil y prueba de sensibilidad ---
-calcular_theil <- function(df, shift) {
-  y <- df$complejidad_producto - min(df$complejidad_producto, na.rm = TRUE) + shift
-  y_bar <- mean(y)
-  N <- length(y)
-  t_total <- mean((y / y_bar) * log(y / y_bar))
-  
-  comp <- df %>%
-    mutate(y = y) %>%
-    group_by(seccion) %>%
-    summarise(
-      ns = n(),
-      ys_bar = mean(y),
-      s_share = (ns * ys_bar) / (N * y_bar),
-      t_s = mean((y / ys_bar) * log(y / ys_bar)),
-      .groups = "drop"
-    )
-  
-  t_entre  <- sum(comp$s_share * log(comp$ys_bar / y_bar))
-  t_dentro <- sum(comp$s_share * comp$t_s)
-  
-  tibble(
-    escenario = if_else(
-      shift == 1,
-      "Desplazamiento base = 1\n(Especificación principal)",
-      "Desplazamiento base = 2\n(Prueba de sensibilidad)"
-    ),
-    `Entre sectores` = (t_entre / t_total) * 100,
-    `Intrasectorial (dentro de cada sector)` = (t_dentro / t_total) * 100
-  )
-}
-
-vcr_validos <- base_da_2 %>%
-  filter(tiene_vcr == 1, !is.na(complejidad_producto), !is.na(seccion))
-
-df_theil_plot <- bind_rows(
-  calcular_theil(vcr_validos, shift = 1),
-  calcular_theil(vcr_validos, shift = 2)
-) %>%
-  pivot_longer(-escenario, names_to = "componente", values_to = "porcentaje")
-
-fig_a2 <- ggplot(df_theil_plot, aes(x = porcentaje, y = fct_rev(escenario), fill = componente)) +
-  geom_col(width = 0.52) +
-  geom_text(
-    aes(label = paste0(number(porcentaje, accuracy = 0.01, decimal.mark = ","), "%")),
-    position = position_stack(vjust = 0.5),
-    color = "white", fontface = "bold", size = 4.2
-  ) +
-  scale_fill_manual(values = c(
-    "Entre sectores"                         = "#D97706",
-    "Intrasectorial (dentro de cada sector)" = "#1D6FA5"
-  )) +
-  scale_x_continuous(labels = label_percent(scale = 1), expand = c(0, 0)) +
-  labs(
-    title    = "Figura A2. Descomposición entrópica de Theil y sensibilidad al desplazamiento de origen",
-    subtitle = "La estructura relativa es estable: ~29% entre sectores y ~71% dentro de los sectores (1.592 pares con VCR)",
-    x        = "Participación en la desigualdad total de complejidad (%)",
-    y        = NULL,
-    caption  = "Fuente: Ministerio de Economía de la Nación (2021). Elaboración propia."
-  ) +
-  tema_anexo +
-  theme(panel.grid.major.y = element_blank())
-
-ggsave("output/graficos/anexo_figura_a2_theil_sensibilidad.png", fig_a2, width = 10, height = 4.5, dpi = 300)
-
-
-# --- FIGURA A3: Perfiles de los 4 Clusters Provinciales (K-Means, K = 4) ---
-df_clusters_plot <- tibble(
-  cluster = factor(
-    c(
-      "Cluster 1\n(Extractivo / Alto VAB)",
-      "Cluster 2\n(Agroexportador)",
-      "Cluster 3\n(Diversificado / Servicios)",
-      "Cluster 4\n(Perfil Industrial)"
-    ),
-    levels = c(
-      "Cluster 1\n(Extractivo / Alto VAB)",
-      "Cluster 2\n(Agroexportador)",
-      "Cluster 3\n(Diversificado / Servicios)",
-      "Cluster 4\n(Perfil Industrial)"
-    )
-  ),
-  `Agro, Alimentos y Bebidas (%)` = c(56.4, 80.3, 44.1, 55.1),
-  `Maquinaria + Químicos (%)`     = c(8.6, 8.9, 9.2, 27.5)
-) %>%
-  pivot_longer(-cluster, names_to = "rubro", values_to = "participacion")
-
-fig_a3 <- ggplot(df_clusters_plot, aes(x = cluster, y = participacion, fill = rubro)) +
-  geom_col(position = position_dodge(width = 0.72), width = 0.65) +
-  geom_text(
-    aes(label = paste0(number(participacion, accuracy = 0.1, decimal.mark = ","), "%")),
-    position = position_dodge(width = 0.72),
-    vjust = -0.45, size = 3.6, fontface = "bold", color = "#1A202C"
-  ) +
-  scale_fill_manual(values = c(
-    "Agro, Alimentos y Bebidas (%)" = "#E69F00",
-    "Maquinaria + Químicos (%)"     = "#1D6FA5"
-  )) +
-  scale_y_continuous(limits = c(0, 95), labels = label_percent(scale = 1)) +
-  labs(
-    title    = "Figura A3. Composición sectorial media por cluster provincial (K-Means, K = 4)",
-    subtitle = "El Cluster 4 triplica el peso promedio de Maquinaria + Químicos (27,5%) respecto al resto de los grupos",
-    x        = NULL,
-    y        = "Participación promedio en canasta VCR (%)",
-    caption  = "Fuente: Ministerio de Economía de la Nación (2021). Elaboración propia (24 jurisdicciones)."
-  ) +
-  tema_anexo +
-  theme(panel.grid.major.x = element_blank())
-
-ggsave("output/graficos/anexo_figura_a3_perfiles_clusters.png", fig_a3, width = 10, height = 5.2, dpi = 300)
-
-
-# --- FIGURA A4: Coeficientes MCO con Intervalos de Confianza Robustos HC3 (95%) ---
-mod1 <- lm(complejidad_prov ~ peso_maq_quim + log(vab_pc_index), data = base_prov)
-mod2 <- lm(complejidad_prov ~ peso_agro + log(vab_pc_index), data = base_prov)
-
-extraer_hc3 <- function(modelo, nombre_mod) {
-  ct <- coeftest(modelo, vcov = vcovHC(modelo, type = "HC3"))
-  ci <- coefci(modelo, vcov = vcovHC(modelo, type = "HC3"), level = 0.95)
-  tibble(
-    modelo   = nombre_mod,
-    termino  = rownames(ct),
-    estimate = ct[, 1],
-    std_err  = ct[, 2],
-    t_val    = ct[, 3],
-    p_val    = ct[, 4],
-    ic_inf   = ci[, 1],
-    ic_sup   = ci[, 2]
-  )
-}
-
-res_hc3 <- bind_rows(
-  extraer_hc3(mod1, "Modelo 1"),
-  extraer_hc3(mod2, "Modelo 2")
-) %>%
-  filter(termino != "(Intercept)") %>%
-  mutate(
-    etiqueta_y = case_when(
-      modelo == "Modelo 1" & termino == "peso_maq_quim"     ~ "Modelo 1: Peso Maquinaria + Químicos",
-      modelo == "Modelo 1" & termino == "log(vab_pc_index)" ~ "Modelo 1: ln(Índice VAB per cápita)",
-      modelo == "Modelo 2" & termino == "peso_agro"         ~ "Modelo 2: Peso Agro, Alim. y Bebidas",
-      modelo == "Modelo 2" & termino == "log(vab_pc_index)" ~ "Modelo 2: ln(Índice VAB per cápita)"
-    ),
-    etiqueta_y = factor(etiqueta_y, levels = c(
-      "Modelo 2: ln(Índice VAB per cápita)",
-      "Modelo 2: Peso Agro, Alim. y Bebidas",
-      "Modelo 1: ln(Índice VAB per cápita)",
-      "Modelo 1: Peso Maquinaria + Químicos"
-    )),
-    estado = case_when(
-      p_val < 0.05 & estimate > 0 ~ "Positivo significativo (p < 0,01)",
-      p_val < 0.05 & estimate < 0 ~ "Negativo significativo (p < 0,05)",
-      TRUE                        ~ "No significativo (p > 0,10)"
-    ),
-    etiqueta_val = paste0(
-      ifelse(estimate > 0, "+", ""),
-      number(estimate, accuracy = 0.001, decimal.mark = ","),
-      ifelse(p_val < 0.05, " *", " (ns)")
-    )
-  )
-
-fig_a4 <- ggplot(res_hc3, aes(x = estimate, y = etiqueta_y, color = estado)) +
-  geom_vline(xintercept = 0, linetype = "dashed", color = "#718096", linewidth = 0.8) +
-  geom_errorbarh(aes(xmin = ic_inf, xmax = ic_sup), height = 0.18, linewidth = 1.1) +
-  geom_point(size = 3.8) +
-  geom_text(
-    aes(label = etiqueta_val, fontface = if_else(p_val < 0.05, "bold", "plain")),
-    vjust = -1.1, size = 3.6, color = "#1A202C", show.legend = FALSE
-  ) +
-  scale_color_manual(values = c(
-    "Positivo significativo (p < 0,01)" = "#1D6FA5",
-    "Negativo significativo (p < 0,05)" = "#D97706",
-    "No significativo (p > 0,10)"       = "#A0AEC0"
-  )) +
-  scale_x_continuous(limits = c(-1.6, 3.3)) +
-  labs(
-    title    = "Figura A4. Efectos parciales sobre el Índice de Complejidad Provincial (MCO HC3)",
-    subtitle = "Solo las participaciones sectoriales resultan significativas al 95%; ln(VAB per cápita) no difiere de cero",
-    x        = "Coeficiente estimado e intervalo de confianza del 95 % (errores robustos HC3)",
-    y        = NULL,
-    caption  = "Fuente: Ministerio de Economía de la Nación (2021) y Moskovits (2024, Tabla 2). n = 24 jurisdicciones."
-  ) +
-  tema_anexo +
-  theme(panel.grid.major.y = element_blank())
-
-ggsave("output/graficos/anexo_figura_a4_coeficientes_hc3.png", fig_a4, width = 10.5, height = 4.8, dpi = 300)
-
-# ==============================================================================
-# 4. EXPORTACIÓN DE TABLAS DEL ANEXO EN CSV (output/tablas/)
-# ==============================================================================
-mod3  <- lm(complejidad_prov ~ vab_pc_index, data = base_prov)
-mod3b <- lm(complejidad_prov ~ vab_pc_index, data = filter(base_prov, productos_vcr_total > 0))
-
-tabla_hc3_completa <- bind_rows(
-  extraer_hc3(mod1,  "Modelo 1: Maq+Quim + ln(VAB pc) [24 jur.]"),
-  extraer_hc3(mod2,  "Modelo 2: Agro + ln(VAB pc) [24 jur.]"),
-  extraer_hc3(mod3,  "Modelo 3: VAB pc simple [24 jur.]"),
-  extraer_hc3(mod3b, "Modelo 3b: VAB pc simple [21 jur. con VCR]")
-)
-
-write_csv(tabla_hc3_completa, "output/tablas/anexo_tabla_regresiones_hc3.csv")
-
-message("¡Listo! Los 4 gráficos PNG se guardaron en output/graficos/ y la tabla en output/tablas/.")
